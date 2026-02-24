@@ -456,6 +456,10 @@ class GenesisAgent:
         # 9.4 Predictive Control
         self.action_sequence_cache = []  # Pre-computed optimal actions
         
+        # 1.10 Interaction Tracking
+        self.trade_count = 0
+        self.punish_count = 0
+        
         self.omega_evidence = {
             'self_sustaining': False,
             'replication': False,
