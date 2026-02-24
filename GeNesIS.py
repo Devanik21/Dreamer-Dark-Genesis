@@ -95,8 +95,7 @@ def init_system():
 
     if "world" not in st.session_state:
         st.session_state.world = GenesisWorld(size=40)
-        # Cloud-Optimized: 40 agents (DreamerV3 ~1.5MB/agent, 40 × 1.5 ≈ 60MB)
-        for _ in range(40):
+        for _ in range(256):
             x, y = np.random.randint(0, 40), np.random.randint(0, 40)
             agent = GenesisAgent(x, y)
             st.session_state.world.agents[agent.id] = agent
@@ -362,7 +361,7 @@ def update_simulation():
         
         # Only fertile agents (Queens) reproduce. Others must support them (feed).
         can_reproduce = agent.is_fertile and agent.energy > repro_thresh
-        if mate_desire > 0.5 and can_reproduce and n_pop < 64:
+        if mate_desire > 0.5 and can_reproduce and n_pop < 256:
             # Look for partner
             partners = [
                 other for other in agents 
@@ -466,8 +465,8 @@ def update_simulation():
 
         # 📉 Malthusian Decay (Crowding Penalty)
         # 1.4 Environmental Pressure: Scarcity scaling
-        # ELASTIC: Only apply overcrowding penalty if population is healthy (> 50)
-        if len(world.agents) >= 50:
+        # ELASTIC: Only apply overcrowding penalty if population is healthy (> 240)
+        if len(world.agents) >= 240:
             malthusian_cost = 0.05 + (np.log1p(len(world.agents)) / 6.0) # Reduced from 0.1 and 4.0
             
             # SAGE BONUS: Elders (>80 ticks) are cleaner metabolizers
@@ -478,16 +477,16 @@ def update_simulation():
             
             agent.energy -= malthusian_cost 
         
-        # 🧬 MITOSIS (Hard Cap: 64 for Cloud Memory)
-        # Nobel Safeguard: Panic Mitosis if pop < 30 (Cheaper cost, lower threshold)
-        if len(world.agents) < 30:
+        # 🧬 MITOSIS (Hard Cap: 256)
+        # Nobel Safeguard: Panic Mitosis if pop < 200 (Cheaper cost, lower threshold)
+        if len(world.agents) < 200:
             mitosis_threshold = 30.0
             mitosis_cost = 10.0
         else:
             mitosis_threshold = 90.0
             mitosis_cost = 40.0
         
-        if agent.energy > mitosis_threshold and len(world.agents) < 64:
+        if agent.energy > mitosis_threshold and len(world.agents) < 256:
             agent.energy -= mitosis_cost 
             off_x = (agent.x + np.random.randint(-1, 2)) % 40
             off_y = (agent.y + np.random.randint(-1, 2)) % 40
@@ -528,7 +527,7 @@ def update_simulation():
             
             if dead_agent.age > 10: 
                 st.session_state.gene_pool.append(dead_agent.get_genome())
-                if len(st.session_state.gene_pool) > 10:  # Cloud-optimized: was 50
+                if len(st.session_state.gene_pool) > 50:
                     st.session_state.gene_pool.pop(0)
                 events_this_tick.append({
                     "Tick": world.time_step,

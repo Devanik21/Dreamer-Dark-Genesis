@@ -62,10 +62,9 @@ class PruningMask(nn.Module):
 
 class GenesisBrain(nn.Module):
     """
-    V-DV4 Dreamer Architecture (2026 SOTA) — Memory-Optimized for Cloud.
-    Hidden dim 128 (down from 256) — same architecture, same intelligence.
+    V-DV4 Dreamer Architecture (2026 SOTA) for 256 Super-Agents.
     """
-    def __init__(self, input_dim=41, hidden_dim=128, output_dim=21):
+    def __init__(self, input_dim=41, hidden_dim=256, output_dim=21):
         super().__init__()
         self.hidden_dim = hidden_dim
         
@@ -136,7 +135,7 @@ class GenesisBrain(nn.Module):
         states = []
         rewards = []
         
-        # Ensure start_state is (B, 128)
+        # Ensure start_state is (B, 256)
         if start_state.dim() == 3: h = start_state.squeeze(0)
         else: h = start_state
             
@@ -200,7 +199,7 @@ class GenesisAgent:
         if parent_hidden is not None:
             self.hidden_state = parent_hidden.detach().clone() + torch.randn_like(parent_hidden) * 0.1
         else:
-            self.hidden_state = torch.zeros(1, 1, 128)
+            self.hidden_state = torch.zeros(1, 1, 256)
         
         # v5.0.4 Persistent state for Ghost Forward
         self.prev_input = None
@@ -303,19 +302,19 @@ class GenesisAgent:
         # ============================================================
         # 💭 LEVEL 8: ABSTRACT REPRESENTATION STATE
         # ============================================================
-        # 8.0 Internal Simulation (World Model) — Lightweight
+        # 8.0 Internal Simulation (World Model)
         self.world_model = nn.Sequential(
-            nn.Linear(41 + 21, 32),  # State + Action -> Next State
+            nn.Linear(41 + 21, 64),  # State + Action -> Next State
             nn.Tanh(),
-            nn.Linear(32, 41)
+            nn.Linear(64, 41)
         )
-        self.world_model_optimizer = optim.SGD(self.world_model.parameters(), lr=0.01)
+        self.world_model_optimizer = optim.Adam(self.world_model.parameters(), lr=0.001)
         
         # 8.1 Counterfactual Reasoning (enhanced from 5.9)
         self.counterfactual_cache = {}  # {action: predicted_outcome}
         
         # 8.2 Self-Modeling
-        self.self_model = nn.Linear(32, 32)  # Models own hidden state dynamics
+        self.self_model = nn.Linear(64, 64)  # Models own hidden state dynamics
         self.self_model_accuracy = 0.0
         
         # 8.3 Other-Modeling (Theory of Mind Level 1)
@@ -360,13 +359,13 @@ class GenesisAgent:
         # 9.2 Exploit Identification
         self.discovered_exploits = []  # List of advantageous quirks
         
-        # 9.3 Mathematical Modeling (Agent's Oracle Approximation) — Lightweight
+        # 9.3 Mathematical Modeling (Agent's Oracle Approximation)
         self.oracle_model = nn.Sequential(
-            nn.Linear(37, 16),
+            nn.Linear(37, 32),
             nn.Tanh(),
-            nn.Linear(16, 5)
+            nn.Linear(32, 5)
         )
-        self.oracle_model_optimizer = optim.SGD(self.oracle_model.parameters(), lr=0.01)
+        self.oracle_model_optimizer = optim.Adam(self.oracle_model.parameters(), lr=0.001)
         self.oracle_model_accuracy = 0.0
         
         # 9.4 Inverse Reinforcement Learning
@@ -418,7 +417,7 @@ class GenesisAgent:
         self.inner_awareness_scores = []  # Awareness of inner simulated agents
         
         # 10.7 Substrate Independence (Conway's Game of Life Scratchpad)
-        self.scratchpad = np.zeros((16, 16), dtype=np.int8)  # Turing-complete CA (Compact)
+        self.scratchpad = np.zeros((32, 32), dtype=np.int8)  # Turing-complete CA
         self.scratchpad_writes = 0
         self.scratchpad_reads = 0
         
@@ -666,7 +665,7 @@ class GenesisAgent:
             
             # Write to scratchpad if inspired (Channel 15 > 0.7)
             if vector[0, 15].item() > 0.7:
-                self.write_scratchpad(int(self.x)%16, int(self.y)%16, 1)
+                self.write_scratchpad(int(self.x)%32, int(self.y)%32, 1)
 
         # 9.9 Simulation Awareness (Infrequent)
         if self.age % 100 == 0:
@@ -719,7 +718,7 @@ class GenesisAgent:
         if self.hidden_state is not None:
              # A. Train Reward Predictor & World Model (Reconstruction)
              # We learn to predict the present before dreaming the future
-             current_h = self.hidden_state.view(1, 128).detach()
+             current_h = self.hidden_state.view(1, 256).detach()
              
              # Predict Reward (Flux)
              pred_reward = self.brain.reward_predictor(current_h)
@@ -1876,7 +1875,7 @@ class GenesisAgent:
     
     def write_scratchpad(self, x, y, value):
         """10.7 Write to Game of Life scratchpad."""
-        if 0 <= x < 16 and 0 <= y < 16:
+        if 0 <= x < 32 and 0 <= y < 32:
             cost = 0.1
             if self.energy > cost:
                 self.energy -= cost
