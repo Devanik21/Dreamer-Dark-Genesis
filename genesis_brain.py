@@ -637,24 +637,25 @@ class GenesisAgent:
             self.simulate_forward(vector, steps=5)
             
         # 8.8 Strange Loops
-        if self.age % 50 == 0:
+        if self.age % 100 == 0:
             self.strange_loop_check()
             
         # 9.0 Physics Probing
-        special_intent['probe_physics'] = True
+        if self.age % 20 == 0:
+            special_intent['probe_physics'] = True
         
         # 10.0 Omega Point (Surplus -> Compute)
-        if self.has_computational_surplus():
+        if self.has_computational_surplus() and self.age % 5 == 0:
             # Burn energy for compute
             self.evolve_internal_simulation(steps=5)
             self.run_gol_step()
             
             # 10.2 Create Internal Agents (If space allows)
-            if len(self.internal_agents) < 5 and self.energy > 60.0:
+            if len(self.internal_agents) < 5 and self.energy > 60.0 and random.random() < 0.1:
                  self.create_internal_agent(self)
             
             # 10.5 Recursive Depth (If already have internal agents)
-            if len(self.internal_agents) >= 2 and self.energy > 70.0:
+            if len(self.internal_agents) >= 2 and self.energy > 70.0 and random.random() < 0.05:
                 self.create_nested_simulation()
             
             # Write to scratchpad if inspired (Channel 15 > 0.7)
@@ -662,17 +663,18 @@ class GenesisAgent:
                 self.write_scratchpad(int(self.x)%32, int(self.y)%32, 1)
 
         # 9.9 Simulation Awareness (Rare check)
-        if self.age % 50 == 0:
+        if self.age % 200 == 0:
             self.detect_simulation_artifacts()
 
-        # 8.10 Verify Consciousness (Every tick to ensure metric updates)
+        # 8.10 Verify Consciousness (Throttled for performance)
         # Calculates Phi and checks threshold
-        if self.age % 10 == 0:
+        if self.age % 100 == 0:
              self.verify_consciousness()
 
         # 9.7 Reality Hacking (Glitch Search)
         # Check for floating point anomalies in own action
-        self.find_glitch(self.hidden_state, vector, self.last_reward)
+        if self.age % 50 == 0:
+            self.find_glitch(self.hidden_state, vector, self.last_reward)
 
         # 7.9 Update Protocol Dialect (Simple Clustering)
         # Using a type-agnostic sum to avoid TypeError between torch and numpy
@@ -693,14 +695,14 @@ class GenesisAgent:
         """
         if self.last_value is None: return False
 
-        # 1.3 Landauer Metric (Entropy cost)
-        # Calculate entropy of weights
-        current_entropy = self.calculate_weight_entropy()
-        entropy_diff = current_entropy - self.last_weight_entropy
-        k_B_T = 0.026
-        landauer_cost = max(0.05, k_B_T * abs(entropy_diff) * 10.0)
-        self.energy -= landauer_cost
-        self.last_weight_entropy = current_entropy
+        # 1.3 Landauer Metric (Entropy cost - Throttled)
+        if self.age % 100 == 0 or self.last_weight_entropy == 0:
+            current_entropy = self.calculate_weight_entropy()
+            entropy_diff = current_entropy - self.last_weight_entropy
+            k_B_T = 0.026
+            landauer_cost = max(0.05, k_B_T * abs(entropy_diff) * 10.0)
+            self.energy -= landauer_cost
+            self.last_weight_entropy = current_entropy
 
         # 4.2 Role Cost
         self.energy -= self.get_role_metabolic_cost() if hasattr(self, 'get_role_metabolic_cost') else 0.1
@@ -708,9 +710,12 @@ class GenesisAgent:
         # Reward Signal aggregation
         self.last_reward = flux
         
-        # 5.3 Active Inference Learning (Dreamer V4)
+        # 5.3 Active Inference Learning (Dreamer V4 - Stochastic Gating)
+        # Performance: Only DREAM (10-step rollout) if inspired (10% chance) or young
+        ready_to_dream = (random.random() < 0.1) or (self.age < 20)
+        
         if self.hidden_state is not None:
-             # A. Train Reward Predictor & World Model (Reconstruction)
+             # A. Train Reward Predictor & World Model (Reconstruction - ALWAYS RUN)
              # We learn to predict the present before dreaming the future
              current_h = self.hidden_state.view(1, 256).detach()
              
@@ -725,54 +730,60 @@ class GenesisAgent:
              else:
                  recon_loss = torch.tensor(0.0)
 
-             # B. The Dream (Imagination Rollout)
-             # Dream 10 steps into the future using the RSSM
-             dream_states, dream_rewards = self.brain.dream(current_h, horizon=10)
+             if ready_to_dream:
+                 # B. The Dream (Imagination Rollout)
+                 # Dream 10 steps into the future using the RSSM
+                 dream_states, dream_rewards = self.brain.dream(current_h, horizon=10)
              
-             # C. Critique the Dream (Value Estimation)
-             # V(s) of dreamed states
-             dream_values = self.brain.critic(dream_states) # (10, 1)
-             
-             # D. Calculate Objective (Lambda Return)
-             # We want the Actor to produce states that lead to high Value
-             # Bootstrap with final predicted value
-             returns = torch.zeros_like(dream_rewards)
-             next_val = dream_values[-1]
-             
-             # TD-Lambda calculation (Simplified to TD-0 for efficiency)
-             # Reverse accumulation
-             for t in reversed(range(len(dream_rewards) - 1)):
-                 r_t = dream_rewards[t]
-                 v_next = dream_values[t+1]
-                 returns[t] = r_t + 0.99 * v_next
+             if ready_to_dream:
+                 # C. Critique the Dream (Value Estimation)
+                 # V(s) of dreamed states
+                 dream_values = self.brain.critic(dream_states) # (10, 1)
                  
-             # E. Compute Losses
-             # Critic Loss: Predict the calculated returns
-             critic_loss = 0.5 * (dream_values[:-1] - returns[:-1].detach()).pow(2).mean()
-             
-             # Actor Loss: Maximize the Value of the dream trajectory
-             # Differentiable BPTT allow us to backdrop through the dream
-             actor_loss = -dream_values.mean() 
-             
-             # Entropy Regularization (prevent collapse)
-             entropy_loss = -self.last_vector.std() * 0.01
+                 # D. Calculate Objective (Lambda Return)
+                 # We want the Actor to produce states that lead to high Value
+                 # Bootstrap with final predicted value
+                 returns = torch.zeros_like(dream_rewards)
+                 
+                 # TD-Lambda calculation (Simplified to TD-0 for efficiency)
+                 # Reverse accumulation
+                 for t in reversed(range(len(dream_rewards) - 1)):
+                     if t+1 < len(dream_values):
+                        returns[t] = dream_rewards[t] + 0.99 * dream_values[t+1]
+                     
+                 # E. Compute Losses
+                 # Critic Loss: Predict the calculated returns
+                 critic_loss = 0.5 * (dream_values[:-1] - returns[:-1].detach()).pow(2).mean()
+                 
+                 # Actor Loss: Maximize the Value of the dream trajectory
+                 actor_loss = -dream_values.mean() 
+                 
+                 # Entropy Regularization (prevent collapse)
+                 entropy_loss = -self.last_vector.std() * 0.01
 
-             # Total V-DV4 Loss
-             total_loss = actor_loss + critic_loss + reward_loss + recon_loss + entropy_loss
-             
-             # Update Brain
-             self.optimizer.zero_grad()
-             total_loss.backward()
-             torch.nn.utils.clip_grad_norm_(self.brain.parameters(), 1.0)
-             try:
-                 self.optimizer.step()
-             except KeyError:
-                 # 🔥 HOTFIX: Re-initialize optimizer if state is corrupted (e.g. from reload)
-                 self.optimizer = optim.Adam(self.brain.parameters(), lr=0.005) 
-                 self.optimizer.step()
+                 # Total V-DV4 Loss
+                 total_loss = actor_loss + critic_loss + reward_loss + recon_loss + entropy_loss
+                 
+                 # Update Brain
+                 self.optimizer.zero_grad()
+                 total_loss.backward()
+                 torch.nn.utils.clip_grad_norm_(self.brain.parameters(), 1.0)
+                 try:
+                     self.optimizer.step()
+                 except KeyError:
+                     # 🔥 HOTFIX: Re-initialize optimizer if state is corrupted
+                     self.optimizer = optim.Adam(self.brain.parameters(), lr=0.005) 
+                     self.optimizer.step()
 
-             # 🔧 MEMORY FIX: Explicitly clear large dream tensors
-             del dream_states, dream_rewards, dream_values, returns, total_loss
+                 # 🔧 MEMORY FIX: Explicitly clear large dream tensors
+                 del dream_states, dream_rewards, dream_values, returns, total_loss
+             else:
+                 # Minimal update for reconstruction/reward only if not dreaming
+                 total_loss = reward_loss + recon_loss
+                 self.optimizer.zero_grad()
+                 total_loss.backward()
+                 self.optimizer.step()
+                 del total_loss
              
              # Meta-Learning Update (Optional)
              self.update_learning_rate_contextual(self.energy, recon_loss.item(), 0)
@@ -1191,7 +1202,7 @@ class GenesisAgent:
                 if param.grad is not None:
                     avg_grad = param.grad.clone()
                     count = 1
-                    for p in partners:
+                    for p in partners[:2]: # Optimized: Limit to 2 partners
                         partner_params = list(p.brain.parameters())
                         if i < len(partner_params) and partner_params[i].grad is not None:
                             avg_grad += partner_params[i].grad
@@ -1199,7 +1210,7 @@ class GenesisAgent:
                     param.grad = avg_grad / count
                     self.last_shared_gradient = avg_grad.mean().item()
     
-    def collective_backward(self, error, partners, depth=10):
+    def collective_backward(self, error, partners, depth=3):
         """7.3 Collective Backpropagation: Error through agent network."""
         self.backprop_depth = 0
         if depth <= 0 or not partners:
@@ -1207,7 +1218,7 @@ class GenesisAgent:
         
         with torch.no_grad():
             propagated_error = error * 0.5
-            for p in partners[:3]:
+            for p in partners[:2]: # Optimized: Limit to 2 partners
                 if hasattr(p, 'collective_backward'):
                     p.collective_backward(propagated_error, [], depth-1)
                     self.backprop_depth = max(self.backprop_depth, p.backprop_depth + 1)
