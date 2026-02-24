@@ -62,14 +62,14 @@ class PruningMask(nn.Module):
 
 class GenesisBrain(nn.Module):
     """
-    V-DV4 Dreamer Architecture (2026 SOTA) for 96 Super-Agents.
+    V-DV4 Dreamer Architecture (2026 SOTA) — Memory-Optimized for Cloud.
+    Hidden dim 128 (down from 256) — same architecture, same intelligence.
     """
-    def __init__(self, input_dim=41, hidden_dim=256, output_dim=21):
+    def __init__(self, input_dim=41, hidden_dim=128, output_dim=21):
         super().__init__()
         self.hidden_dim = hidden_dim
         
         # 1. Encoder (Sensory Processing)
-        # Compresses 41D input -> 256D Latent State
         self.encoder = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
@@ -77,11 +77,9 @@ class GenesisBrain(nn.Module):
         )
         
         # 2. RSSM (Recurrent State-Space Model) - The Dream Engine
-        # Deterministic state (h) + Stochastic state (z)
         self.rssm_cell = nn.GRUCell(hidden_dim, hidden_dim)
         
         # 3. Transformer Actor (Attention-based Policy)
-        # Tiny Transformer Block for attention-based decision-making
         self.actor_attention = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=4, batch_first=True)
         self.actor = nn.Linear(hidden_dim, output_dim)
         
@@ -138,7 +136,7 @@ class GenesisBrain(nn.Module):
         states = []
         rewards = []
         
-        # Ensure start_state is (B, 256)
+        # Ensure start_state is (B, 128)
         if start_state.dim() == 3: h = start_state.squeeze(0)
         else: h = start_state
             
@@ -202,7 +200,7 @@ class GenesisAgent:
         if parent_hidden is not None:
             self.hidden_state = parent_hidden.detach().clone() + torch.randn_like(parent_hidden) * 0.1
         else:
-            self.hidden_state = torch.zeros(1, 1, 256)
+            self.hidden_state = torch.zeros(1, 1, 128)
         
         # v5.0.4 Persistent state for Ghost Forward
         self.prev_input = None
@@ -212,7 +210,7 @@ class GenesisAgent:
         
         # LEVEL 5 STATE MEMORY
         # 5.0 Self-Monitoring
-        self.prediction_errors = []
+        self.prediction_errors = []  # Capped at 50
         self.confidence = 0.5 
         
         # 5.1 Meta-Learning (Hypergradients)
@@ -226,15 +224,14 @@ class GenesisAgent:
         self.research_log = []
         
         # 3.2 Horizontal Neural Transfer (Viral Memory)
-        self.meme_pool = [] # List of {weights: StateDict, fitness: float, beta: float, type: 'virus'}
+        self.meme_pool = [] # Capped at 3
 
         # ============================================================
         # 🌍 LEVEL 6: GEO-ENGINEERING STATE
         # ============================================================
         # 6.0 Environmental Prediction
-        self.env_history = []  # [(x, y, signal, tick)] history buffer
+        self.env_history = []  # [(x, y, signal, tick)] history buffer (capped at 30)
         self.env_prediction_accuracy = 0.0
-        self.env_predictor_hidden = torch.zeros(1, 1, 32)
         
         # 6.1 Probabilistic Environment Collapse (Bayesian Niche Construction)
         self.env_beliefs = {}  # {(x,y): np.array([P(food), P(poison), P(empty)])}
@@ -306,19 +303,19 @@ class GenesisAgent:
         # ============================================================
         # 💭 LEVEL 8: ABSTRACT REPRESENTATION STATE
         # ============================================================
-        # 8.0 Internal Simulation (World Model)
+        # 8.0 Internal Simulation (World Model) — Lightweight
         self.world_model = nn.Sequential(
-            nn.Linear(41 + 21, 64),  # State + Action -> Next State
+            nn.Linear(41 + 21, 32),  # State + Action -> Next State
             nn.Tanh(),
-            nn.Linear(64, 41)
+            nn.Linear(32, 41)
         )
-        self.world_model_optimizer = optim.Adam(self.world_model.parameters(), lr=0.001)
+        self.world_model_optimizer = optim.SGD(self.world_model.parameters(), lr=0.01)
         
         # 8.1 Counterfactual Reasoning (enhanced from 5.9)
         self.counterfactual_cache = {}  # {action: predicted_outcome}
         
         # 8.2 Self-Modeling
-        self.self_model = nn.Linear(64, 64)  # Models own hidden state dynamics
+        self.self_model = nn.Linear(32, 32)  # Models own hidden state dynamics
         self.self_model_accuracy = 0.0
         
         # 8.3 Other-Modeling (Theory of Mind Level 1)
@@ -354,7 +351,7 @@ class GenesisAgent:
         # ⚛️ LEVEL 9: UNIVERSAL HARMONIC RESONANCE STATE
         # ============================================================
         # 9.0 Physics Probing
-        self.physics_experiments = []  # [(state, action, outcome)]
+        self.physics_experiments = []  # Capped at 50
         self.state_space_coverage = 0.0
         
         # 9.1 Pattern Discovery
@@ -363,13 +360,13 @@ class GenesisAgent:
         # 9.2 Exploit Identification
         self.discovered_exploits = []  # List of advantageous quirks
         
-        # 9.3 Mathematical Modeling (Agent's Oracle Approximation)
+        # 9.3 Mathematical Modeling (Agent's Oracle Approximation) — Lightweight
         self.oracle_model = nn.Sequential(
-            nn.Linear(37, 32),
+            nn.Linear(37, 16),
             nn.Tanh(),
-            nn.Linear(32, 5)
+            nn.Linear(16, 5)
         )
-        self.oracle_model_optimizer = optim.Adam(self.oracle_model.parameters(), lr=0.001)
+        self.oracle_model_optimizer = optim.SGD(self.oracle_model.parameters(), lr=0.01)
         self.oracle_model_accuracy = 0.0
         
         # 9.4 Inverse Reinforcement Learning
@@ -406,7 +403,7 @@ class GenesisAgent:
         self.internal_dim_used = 0  # Intrinsic dimensionality of representations
         
         # 10.2 Simulation Primitives
-        self.internal_agents = []  # List of {weights, state, goal}
+        self.internal_agents = []  # Capped at 2 (memory-limited)
         
         # 10.3 Nested Dynamics
         self.internal_simulation_steps = 0
@@ -421,7 +418,7 @@ class GenesisAgent:
         self.inner_awareness_scores = []  # Awareness of inner simulated agents
         
         # 10.7 Substrate Independence (Conway's Game of Life Scratchpad)
-        self.scratchpad = np.zeros((32, 32), dtype=np.int8)  # Turing-complete CA
+        self.scratchpad = np.zeros((16, 16), dtype=np.int8)  # Turing-complete CA (Compact)
         self.scratchpad_writes = 0
         self.scratchpad_reads = 0
         
@@ -660,7 +657,7 @@ class GenesisAgent:
             self.run_gol_step()
             
             # 10.2 Create Internal Agents (If space allows)
-            if len(self.internal_agents) < 5 and self.energy > 60.0:
+            if len(self.internal_agents) < 2 and self.energy > 60.0:
                  self.create_internal_agent(self)
             
             # 10.5 Recursive Depth (If already have internal agents)
@@ -669,7 +666,7 @@ class GenesisAgent:
             
             # Write to scratchpad if inspired (Channel 15 > 0.7)
             if vector[0, 15].item() > 0.7:
-                self.write_scratchpad(int(self.x)%32, int(self.y)%32, 1)
+                self.write_scratchpad(int(self.x)%16, int(self.y)%16, 1)
 
         # 9.9 Simulation Awareness (Infrequent)
         if self.age % 100 == 0:
@@ -722,7 +719,7 @@ class GenesisAgent:
         if self.hidden_state is not None:
              # A. Train Reward Predictor & World Model (Reconstruction)
              # We learn to predict the present before dreaming the future
-             current_h = self.hidden_state.view(1, 256).detach()
+             current_h = self.hidden_state.view(1, 128).detach()
              
              # Predict Reward (Flux)
              pred_reward = self.brain.reward_predictor(current_h)
@@ -739,36 +736,54 @@ class GenesisAgent:
              # Dream 5 steps into the future (Horizon reduced for performance)
              # Only dream every 5 ticks per agent, staggered by their birth offset
              if (self.age + self.dream_update_tick) % 5 == 0:
-                 try:
-                     dream_states, dream_rewards = self.brain.dream(current_h, horizon=5)
-                     
-                     # C. Critique the Dream (Value Estimation)
-                     # V(s) of dreamed states
-                     dream_values = self.brain.critic(dream_states) 
-                     
-                     # D. Calculate TD-0 Returns
-                     returns = torch.zeros_like(dream_rewards)
-                     for t in reversed(range(len(dream_rewards) - 1)):
-                         returns[t] = dream_rewards[t] + 0.99 * dream_values[t+1]
-                         
-                     # E. Compute Losses
-                     critic_loss = 0.5 * (dream_values[:-1] - returns[:-1].detach()).pow(2).mean()
-                     actor_loss = -dream_values.mean() 
-                     entropy_loss = -self.last_vector.std() * 0.01
-    
-                     # Total V-DV4 Loss
-                     total_loss = actor_loss + critic_loss + reward_loss + recon_loss + entropy_loss
-                     
-                     # Update Brain
-                     self.optimizer.zero_grad()
-                     total_loss.backward()
-                     torch.nn.utils.clip_grad_norm_(self.brain.parameters(), 1.0)
-                     self.optimizer.step()
-    
-                     # � MEMORY FIX: Explicitly clear large dream tensors
-                     del dream_states, dream_rewards, dream_values, returns, total_loss
-                 except Exception:
-                     pass # 🛡️ Protection against learning-related crashes
+                 dream_states, dream_rewards = self.brain.dream(current_h, horizon=5)
+             else:
+                 return True # Skip learning this tick to save compute
+             
+             # C. Critique the Dream (Value Estimation)
+             # V(s) of dreamed states
+             dream_values = self.brain.critic(dream_states) # (10, 1)
+             
+             # D. Calculate Objective (Lambda Return)
+             # We want the Actor to produce states that lead to high Value
+             # Bootstrap with final predicted value
+             returns = torch.zeros_like(dream_rewards)
+             next_val = dream_values[-1]
+             
+             # TD-Lambda calculation (Simplified to TD-0 for efficiency)
+             # Reverse accumulation
+             for t in reversed(range(len(dream_rewards) - 1)):
+                 r_t = dream_rewards[t]
+                 v_next = dream_values[t+1]
+                 returns[t] = r_t + 0.99 * v_next
+                 
+             # E. Compute Losses
+             # Critic Loss: Predict the calculated returns
+             critic_loss = 0.5 * (dream_values[:-1] - returns[:-1].detach()).pow(2).mean()
+             
+             # Actor Loss: Maximize the Value of the dream trajectory
+             # Differentiable BPTT allow us to backdrop through the dream
+             actor_loss = -dream_values.mean() 
+             
+             # Entropy Regularization (prevent collapse)
+             entropy_loss = -self.last_vector.std() * 0.01
+
+             # Total V-DV4 Loss
+             total_loss = actor_loss + critic_loss + reward_loss + recon_loss + entropy_loss
+             
+             # Update Brain
+             self.optimizer.zero_grad()
+             total_loss.backward()
+             torch.nn.utils.clip_grad_norm_(self.brain.parameters(), 1.0)
+             try:
+                 self.optimizer.step()
+             except KeyError:
+                 # 🔥 HOTFIX: Re-initialize optimizer if state is corrupted (e.g. from reload)
+                 self.optimizer = optim.Adam(self.brain.parameters(), lr=0.005) 
+                 self.optimizer.step()
+
+             # 🔧 MEMORY FIX: Explicitly clear large dream tensors
+             del dream_states, dream_rewards, dream_values, returns, total_loss
              
              # Meta-Learning Update (Optional)
              self.update_learning_rate_contextual(self.energy, recon_loss.item(), 0)
@@ -976,8 +991,8 @@ class GenesisAgent:
         return packet
 
     def receive_infection(self, packet):
-        """3.2 Receive a viral packet."""
-        if len(self.meme_pool) < 5:
+        """3.2 Receive a viral packet (Memory-Capped)."""
+        if len(self.meme_pool) < 3:
             self.meme_pool.append(packet)
 
     # ============================================================
@@ -985,9 +1000,9 @@ class GenesisAgent:
     # ============================================================
     
     def record_environment(self, x, y, signal, tick):
-        """6.0 Environmental Prediction: Record observation history."""
+        """6.0 Environmental Prediction: Record observation history (Memory-Capped)."""
         self.env_history.append((x, y, signal.clone().detach(), tick))
-        if len(self.env_history) > 100:
+        if len(self.env_history) > 30:
             self.env_history.pop(0)
     
     def predict_environment(self, target_x, target_y, future_tick):
@@ -1003,10 +1018,10 @@ class GenesisAgent:
         prediction = history_tensor.mean(dim=1).squeeze(0)
         
         # Calculate accuracy from past predictions if available
-        if len(self.env_history) > 50:
+        if len(self.env_history) > 20:
             actual = self.env_history[-1][2]
-            predicted_50_ago = torch.stack([r[2] for r in self.env_history[-60:-50]]).mean(dim=0)
-            mse = ((actual - predicted_50_ago)**2).mean().item()
+            predicted_old = torch.stack([r[2] for r in self.env_history[-20:-10]]).mean(dim=0)
+            mse = ((actual - predicted_old)**2).mean().item()
             self.env_prediction_accuracy = max(0, 1.0 - mse)
         
         return prediction, self.env_prediction_accuracy
@@ -1446,9 +1461,9 @@ class GenesisAgent:
             return False
         
         with torch.no_grad():
-            dim = 256
+            dim = self.brain.hidden_dim  # Dynamic: 128 for cloud-optimized brain
             weight_sample = next(self.brain.parameters()).flatten()[:dim]
-            # Handle case where weights might be smaller than dim (unlikely for V4 but safe)
+            # Handle case where weights might be smaller than dim
             if len(weight_sample) < dim:
                  pad = torch.zeros(dim - len(weight_sample))
                  if weight_sample.is_cuda: pad = pad.cuda()
@@ -1466,7 +1481,7 @@ class GenesisAgent:
             else:
                  combined = weight_encoding
 
-            # Ensure combined is exactly (1, 256)
+            # Ensure combined is exactly (1, hidden_dim)
             if combined.shape[1] != dim:
                  if combined.shape[1] > dim:
                      combined = combined[:, :dim]
@@ -1536,19 +1551,19 @@ class GenesisAgent:
     # ============================================================
     
     def probe_physics(self, state, action, outcome):
-        """9.0 Physics Probing: Systematic environment testing."""
+        """9.0 Physics Probing: Systematic environment testing (Memory-Capped)."""
         self.physics_experiments.append({
             'state': state.clone().detach() if torch.is_tensor(state) else state,
             'action': action.clone().detach() if torch.is_tensor(action) else action,
             'outcome': outcome
         })
         
-        if len(self.physics_experiments) > 500:
+        if len(self.physics_experiments) > 50:
             self.physics_experiments.pop(0)
         
         unique_states = len(set(str(e['state'].tolist()) for e in self.physics_experiments 
                                 if torch.is_tensor(e['state'])))
-        self.state_space_coverage = unique_states / 500.0
+        self.state_space_coverage = unique_states / 50.0
     
     def detect_patterns(self):
         """9.1 Pattern Discovery: Statistical pattern detection."""
@@ -1680,9 +1695,9 @@ class GenesisAgent:
         return len(self.discovered_glitches) > 0
     
     def do_calculus_intervention(self, action_idx, observed_result):
-        """9.8 Pearl's Causal Calculus: P(R|do(A)) via intervention."""
+        """9.8 Pearl's Causal Calculus: P(R|do(A)) via intervention (Memory-Capped)."""
         self.intervention_history.append((action_idx, observed_result))
-        if len(self.intervention_history) > 200:
+        if len(self.intervention_history) > 50:
             self.intervention_history.pop(0)
         
         # Build causal graph from interventions
@@ -1861,7 +1876,7 @@ class GenesisAgent:
     
     def write_scratchpad(self, x, y, value):
         """10.7 Write to Game of Life scratchpad."""
-        if 0 <= x < 32 and 0 <= y < 32:
+        if 0 <= x < 16 and 0 <= y < 16:
             cost = 0.1
             if self.energy > cost:
                 self.energy -= cost

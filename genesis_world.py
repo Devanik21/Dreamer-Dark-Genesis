@@ -758,7 +758,9 @@ class GenesisWorld:
         # 4.9 Collective Memory: Retrieve lost knowledge
         self.collective_memory_retrieval()
         
-        self._update_entropy_metrics()
+        # Staggered: only recalculate every 10 ticks for performance
+        if self.time_step % 10 == 0:
+            self._update_entropy_metrics()
         
         # 5.6 Collective Optimization
         if self.time_step % 100 == 0:
@@ -1396,10 +1398,13 @@ class GenesisWorld:
         if self.time_step % 3 == 0:
             self.spawn_resource_with_cultivation()
         
-        # Level 7: Collective Manifold
-        self.kuramoto_global_step()
-        self.federated_gradient_step()
-        self.update_cognitive_modules()
+        # Level 7: Collective Manifold (Staggered for performance)
+        if self.time_step % 3 == 1:
+            self.kuramoto_global_step()
+        if self.time_step % 5 == 2:
+            self.federated_gradient_step()
+        if self.time_step % 10 == 3:
+            self.update_cognitive_modules()
         if self.time_step % 20 == 4: # Staggered
             self.update_protocol_convergence()
         if self.time_step % 10 == 2: # Staggered

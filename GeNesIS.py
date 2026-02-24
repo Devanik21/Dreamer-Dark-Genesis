@@ -9,6 +9,7 @@ import zipfile
 import io
 import torch
 import random
+import gc
 from genesis_world import GenesisWorld, Resource, Structure, Trap, Barrier, Battery, Cultivator, InfrastructureNetwork, TerrainModification
 from genesis_brain import GenesisAgent
 from sklearn.cluster import KMeans
@@ -94,7 +95,8 @@ def init_system():
 
     if "world" not in st.session_state:
         st.session_state.world = GenesisWorld(size=40)
-        for _ in range(100):
+        # Cloud-Optimized: 40 agents (DreamerV3 ~1.5MB/agent, 40 × 1.5 ≈ 60MB)
+        for _ in range(40):
             x, y = np.random.randint(0, 40), np.random.randint(0, 40)
             agent = GenesisAgent(x, y)
             st.session_state.world.agents[agent.id] = agent
@@ -226,24 +228,26 @@ def update_simulation():
         # 1.7 Gradient Sensing (Stress Response)
         gradient_val = world.get_energy_gradient(agent.x, agent.y).item()
 
-        # Decide now returns (Vector, CommVector, Mate, Adhesion, Punish, Trade, MemeWrite, SpecialIntent)
-        reality_vector_tensor, comm_vector, mate_desire, adhesion_val, punish_val, trade_val, meme_write, special_intent = agent.decide(
-            signal, 
-            pheromone_16=pheromone_vector, 
-            meme_3=meme_vector, # 3.3 Input
-            env_phase=env_phase,
-            social_trust=social_trust,
-            gradient=gradient_val
-        ) 
-        
-        # 3.3 Stigmergy: Write to Meme Grid
-        # Decaying write to avoid saturation: Old * 0.9 + New * 0.1
-        world.meme_grid[mx, my] = world.meme_grid[mx, my] * 0.9 + meme_write.detach().cpu().numpy().flatten() * 0.1
-        
-        flux, log_text = world.resolve_quantum_state(
-            agent, reality_vector_tensor, emit_vector=comm_vector, 
-            adhesion=adhesion_val, punish=punish_val, trade=trade_val
-        ) 
+        # 🔧 MEMORY FIX: Use no_grad for forward pass (matches v3 optimization)
+        with torch.no_grad():
+            # Decide now returns (Vector, CommVector, Mate, Adhesion, Punish, Trade, MemeWrite, SpecialIntent)
+            reality_vector_tensor, comm_vector, mate_desire, adhesion_val, punish_val, trade_val, meme_write, special_intent = agent.decide(
+                signal, 
+                pheromone_16=pheromone_vector, 
+                meme_3=meme_vector, # 3.3 Input
+                env_phase=env_phase,
+                social_trust=social_trust,
+                gradient=gradient_val
+            ) 
+            
+            # 3.3 Stigmergy: Write to Meme Grid
+            # Decaying write to avoid saturation: Old * 0.9 + New * 0.1
+            world.meme_grid[mx, my] = world.meme_grid[mx, my] * 0.9 + meme_write.detach().cpu().numpy().flatten() * 0.1
+            
+            flux, log_text = world.resolve_quantum_state(
+                agent, reality_vector_tensor, emit_vector=comm_vector, 
+                adhesion=adhesion_val, punish=punish_val, trade=trade_val
+            ) 
 
         # 8.9 Qualia Recording (Shared Concepts Proof)
         if hasattr(agent, 'classify_qualia'):
@@ -358,7 +362,7 @@ def update_simulation():
         
         # Only fertile agents (Queens) reproduce. Others must support them (feed).
         can_reproduce = agent.is_fertile and agent.energy > repro_thresh
-        if mate_desire > 0.5 and can_reproduce and n_pop < 256:
+        if mate_desire > 0.5 and can_reproduce and n_pop < 64:
             # Look for partner
             partners = [
                 other for other in agents 
@@ -462,8 +466,8 @@ def update_simulation():
 
         # 📉 Malthusian Decay (Crowding Penalty)
         # 1.4 Environmental Pressure: Scarcity scaling
-        # ELASTIC: Only apply overcrowding penalty if population is healthy (> 240)
-        if len(world.agents) >= 240:
+        # ELASTIC: Only apply overcrowding penalty if population is healthy (> 50)
+        if len(world.agents) >= 50:
             malthusian_cost = 0.05 + (np.log1p(len(world.agents)) / 6.0) # Reduced from 0.1 and 4.0
             
             # SAGE BONUS: Elders (>80 ticks) are cleaner metabolizers
@@ -474,16 +478,16 @@ def update_simulation():
             
             agent.energy -= malthusian_cost 
         
-        # 🧬 MITOSIS (Hard Cap: 256 per PPO-128 upgrade)
-        # Nobel Safeguard: Panic Mitosis if pop < 200 (Cheaper cost, lower threshold)
-        if len(world.agents) < 200:
+        # 🧬 MITOSIS (Hard Cap: 64 for Cloud Memory)
+        # Nobel Safeguard: Panic Mitosis if pop < 30 (Cheaper cost, lower threshold)
+        if len(world.agents) < 30:
             mitosis_threshold = 30.0
             mitosis_cost = 10.0
         else:
             mitosis_threshold = 90.0
             mitosis_cost = 40.0
         
-        if agent.energy > mitosis_threshold and len(world.agents) < 256:
+        if agent.energy > mitosis_threshold and len(world.agents) < 64:
             agent.energy -= mitosis_cost 
             off_x = (agent.x + np.random.randint(-1, 2)) % 40
             off_y = (agent.y + np.random.randint(-1, 2)) % 40
@@ -524,7 +528,7 @@ def update_simulation():
             
             if dead_agent.age > 10: 
                 st.session_state.gene_pool.append(dead_agent.get_genome())
-                if len(st.session_state.gene_pool) > 50:
+                if len(st.session_state.gene_pool) > 10:  # Cloud-optimized: was 50
                     st.session_state.gene_pool.pop(0)
                 events_this_tick.append({
                     "Tick": world.time_step,
@@ -600,6 +604,12 @@ def update_simulation():
         st.session_state.event_log.insert(0, e) 
         st.session_state.total_events_count += 1 # Global discovery counter
     st.session_state.event_log = st.session_state.event_log[:20]
+
+    # 🔧 MEMORY FIX: Aggressive Garbage Collection for 1GB Cloud
+    if world.time_step % 10 == 0:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 update_simulation()
 
