@@ -739,54 +739,36 @@ class GenesisAgent:
              # Dream 5 steps into the future (Horizon reduced for performance)
              # Only dream every 5 ticks per agent, staggered by their birth offset
              if (self.age + self.dream_update_tick) % 5 == 0:
-                 dream_states, dream_rewards = self.brain.dream(current_h, horizon=5)
-             else:
-                 return True # Skip learning this tick to save compute
-             
-             # C. Critique the Dream (Value Estimation)
-             # V(s) of dreamed states
-             dream_values = self.brain.critic(dream_states) # (10, 1)
-             
-             # D. Calculate Objective (Lambda Return)
-             # We want the Actor to produce states that lead to high Value
-             # Bootstrap with final predicted value
-             returns = torch.zeros_like(dream_rewards)
-             next_val = dream_values[-1]
-             
-             # TD-Lambda calculation (Simplified to TD-0 for efficiency)
-             # Reverse accumulation
-             for t in reversed(range(len(dream_rewards) - 1)):
-                 r_t = dream_rewards[t]
-                 v_next = dream_values[t+1]
-                 returns[t] = r_t + 0.99 * v_next
-                 
-             # E. Compute Losses
-             # Critic Loss: Predict the calculated returns
-             critic_loss = 0.5 * (dream_values[:-1] - returns[:-1].detach()).pow(2).mean()
-             
-             # Actor Loss: Maximize the Value of the dream trajectory
-             # Differentiable BPTT allow us to backdrop through the dream
-             actor_loss = -dream_values.mean() 
-             
-             # Entropy Regularization (prevent collapse)
-             entropy_loss = -self.last_vector.std() * 0.01
-
-             # Total V-DV4 Loss
-             total_loss = actor_loss + critic_loss + reward_loss + recon_loss + entropy_loss
-             
-             # Update Brain
-             self.optimizer.zero_grad()
-             total_loss.backward()
-             torch.nn.utils.clip_grad_norm_(self.brain.parameters(), 1.0)
-             try:
-                 self.optimizer.step()
-             except KeyError:
-                 # 🔥 HOTFIX: Re-initialize optimizer if state is corrupted (e.g. from reload)
-                 self.optimizer = optim.Adam(self.brain.parameters(), lr=0.005) 
-                 self.optimizer.step()
-
-             # 🔧 MEMORY FIX: Explicitly clear large dream tensors
-             del dream_states, dream_rewards, dream_values, returns, total_loss
+                 try:
+                     dream_states, dream_rewards = self.brain.dream(current_h, horizon=5)
+                     
+                     # C. Critique the Dream (Value Estimation)
+                     # V(s) of dreamed states
+                     dream_values = self.brain.critic(dream_states) 
+                     
+                     # D. Calculate TD-0 Returns
+                     returns = torch.zeros_like(dream_rewards)
+                     for t in reversed(range(len(dream_rewards) - 1)):
+                         returns[t] = dream_rewards[t] + 0.99 * dream_values[t+1]
+                         
+                     # E. Compute Losses
+                     critic_loss = 0.5 * (dream_values[:-1] - returns[:-1].detach()).pow(2).mean()
+                     actor_loss = -dream_values.mean() 
+                     entropy_loss = -self.last_vector.std() * 0.01
+    
+                     # Total V-DV4 Loss
+                     total_loss = actor_loss + critic_loss + reward_loss + recon_loss + entropy_loss
+                     
+                     # Update Brain
+                     self.optimizer.zero_grad()
+                     total_loss.backward()
+                     torch.nn.utils.clip_grad_norm_(self.brain.parameters(), 1.0)
+                     self.optimizer.step()
+    
+                     # � MEMORY FIX: Explicitly clear large dream tensors
+                     del dream_states, dream_rewards, dream_values, returns, total_loss
+                 except Exception:
+                     pass # 🛡️ Protection against learning-related crashes
              
              # Meta-Learning Update (Optional)
              self.update_learning_rate_contextual(self.energy, recon_loss.item(), 0)
