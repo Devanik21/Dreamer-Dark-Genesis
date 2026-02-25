@@ -60,100 +60,133 @@ class PruningMask(nn.Module):
         # Hard thresholding stays at 0% for too long.
         return 1.0 - self.forward().mean()
 
+class PPOBuffer:
+    """Circular trajectory buffer for Proximal Policy Optimization.
+    Stores detached experiences to avoid graph leaks on Streamlit Cloud."""
+    def __init__(self, max_size=32):
+        self.max_size = max_size
+        self.log_probs = []
+        self.values = []
+        self.rewards = []
+        self.advantages = []
+    
+    def store(self, log_prob, value, reward):
+        """Store a single transition. All tensors are detached."""
+        self.log_probs.append(log_prob.detach())
+        self.values.append(value.detach())
+        self.rewards.append(float(reward))
+        # Evict oldest if over capacity
+        if len(self.log_probs) > self.max_size:
+            self.log_probs.pop(0)
+            self.values.pop(0)
+            self.rewards.pop(0)
+    
+    def get_old_log_prob(self):
+        """Return the most recent stored log probability."""
+        if self.log_probs:
+            return self.log_probs[-1]
+        return None
+    
+    def __len__(self):
+        return len(self.log_probs)
+    
+    def clear(self):
+        self.log_probs.clear()
+        self.values.clear()
+        self.rewards.clear()
+        self.advantages.clear()
+
 class GenesisBrain(nn.Module):
     """
-    V-DV4 Dreamer Architecture (2026 SOTA) for Genesis Agents.
-    Input: 41D -> Encoder -> RSSM (GRUCell) -> Transformer Actor -> 21D Output
-    Hidden: 128 (Resource-Equivalent to Original PPO-128)
+    The cognitive engine of an agent.
+    Input: [Local Matter (16) + Pheromone (16) + Meme (3) + Phase (2) + Energy (1) + Reward (1) + Trust (1) + Gradient (1)] = 41 Dimensions
+    Hidden: 128 (PPO-128 Upgrade)
+    Output: 21 (Reality Vector) + 16 (Comm Vector) + 4 (Mate, Adhesion, Punish, Trade) + 1 (Critic)
     """
     def __init__(self, input_dim=41, hidden_dim=128, output_dim=21):
         super().__init__()
         self.hidden_dim = hidden_dim
         
-        # 1. Encoder (Sensory Processing)
-        # Compresses 41D input -> 128D Latent State
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.SiLU()
-        )
+        # 1.1 Neural Learning
+        self.gru = nn.GRU(input_dim, hidden_dim, batch_first=True)
+        self.actor = nn.Linear(hidden_dim, output_dim) 
+        # 5.2 Pruning Mask for Actor (Architecture Search)
+        self.actor_mask = PruningMask(self.actor.weight.shape)
         
-        # 2. RSSM (Recurrent State-Space Model) - The Dream Engine
-        # Deterministic state (h) + Stochastic state (z)
-        self.rssm_cell = nn.GRUCell(hidden_dim, hidden_dim)
+        self.comm_out = nn.Linear(hidden_dim, 16) # Social Signaling Layer
+        self.meta_out = nn.Linear(hidden_dim, 4) # [Mate, Adhesion, Punish, Trade]
+        self.critic = nn.Linear(hidden_dim, 1) # Value function for RL
         
-        # 3. Transformer Actor (Attention-based Policy)
-        # Tiny Transformer Block for attention-based decision-making
-        self.actor_attention = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=4, batch_first=True)
-        self.actor = nn.Linear(hidden_dim, output_dim)
+        # PPO-128: Learnable action standard deviation for stochastic policy
+        # Initialized to log(0.5) ≈ -0.69 for moderate initial exploration
+        self.action_log_std = nn.Parameter(torch.ones(1, output_dim) * -0.69)
         
-        # 4. Critic (Value Function)
-        self.critic = nn.Linear(hidden_dim, 1)
-        
-        # 5. Reward Predictor (For Dreaming)
-        self.reward_predictor = nn.Linear(hidden_dim, 1)
-        
-        # Auxiliary Heads
-        self.comm_out = nn.Linear(hidden_dim, 16)
-        self.meta_out = nn.Linear(hidden_dim, 4)
-        self.predictor = nn.Linear(hidden_dim, input_dim) # Reconstruction
-        self.abstraction_encoder = nn.Linear(hidden_dim, 8) # Concepts
+        # 5.8 Abstraction Discovery ( Bottleneck Autoencoder )
+        # Compress hidden state to find "Concepts"
+        self.concept_dim = 8
+        self.abstraction_encoder = nn.Linear(hidden_dim, self.concept_dim)
+        self.abstraction_decoder = nn.Linear(self.concept_dim, hidden_dim)
 
-        # Initialize
+        # 3.9 Narrative Memory & 5.9 Causal Predictor
+        # Predicts the NEXT input state (Self-Supervised Learning)
+        # Optimized for counterfactual reasoning
+        self.predictor = nn.Linear(hidden_dim, input_dim) 
+        
+        # 5.7 Cognitive Compression
+        # Learnable compression of the GRU weight updates (largest matrix)
+        # Flattened GRU weight size: 3*hidden*hidden + 3*hidden*input approx
+        # We simplify: Just learn to compress the Hidden->Hidden interactions (64x64)
+        self.compressor = nn.Sequential(
+            nn.Linear(hidden_dim, 16),
+            nn.Tanh(),
+            nn.Linear(16, hidden_dim)
+        )
+        # Initialize small to start as identity-like
+        nn.init.orthogonal_(self.compressor[0].weight, gain=0.1)
+        nn.init.orthogonal_(self.compressor[2].weight, gain=0.1)
+        
+        # Initialize weights
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                nn.init.orthogonal_(m.weight, gain=1.0)
+                nn.init.xavier_normal_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0.0)
 
     def forward(self, x, hidden):
-        # Ensure hidden state is correct shape (B, 128) for GRUCell
         if hidden is None:
-            hidden = torch.zeros(x.size(0), self.hidden_dim)
-        elif hidden.dim() == 3: 
-            hidden = hidden.squeeze(0)
+            hidden = torch.zeros(1, x.size(0), self.hidden_dim)
             
-        # 1. Encode
-        embed = self.encoder(x)
+        out, h_next = self.gru(x.unsqueeze(1), hidden)
+        last_hidden = out[:, -1, :]
         
-        # 2. Recurrent Step (RSSM)
-        h_next = self.rssm_cell(embed, hidden)
+        # 5.8 Abstraction: Force information through bottleneck
+        concepts = torch.relu(self.abstraction_encoder(last_hidden))
+        reconstructed_hidden = self.abstraction_decoder(concepts)
+        # Residual connection to preserve gradients but encourage concept usage
+        # SURGERY: Increased from 0.1 to 0.3 to force "body-mind" alignment
+        mixed_hidden = last_hidden + reconstructed_hidden * 0.3
         
-        # 3. Actor (Transformer Block)
-        # Add sequence dim for attention: (B, 1, H)
-        h_seq = h_next.unsqueeze(1)
-        # Self-Attention on current thought
-        attn_out, _ = self.actor_attention(h_seq, h_seq, h_seq)
-        action_feat = attn_out.squeeze(1) + h_next # Residual
+        # 5.2 Apply Pruning Mask
+        effective_weights = self.actor.weight * self.actor_mask()
+        # Manual linear pass to allow weighting
+        action_mean = torch.nn.functional.linear(mixed_hidden, effective_weights, self.actor.bias)
         
-        # 4. Heads
-        vector = torch.relu(self.actor(action_feat))
-        comm = torch.sigmoid(self.comm_out(h_next))
-        meta = torch.sigmoid(self.meta_out(h_next))
-        value = self.critic(h_next)
-        prediction = self.predictor(h_next)
-        concepts = torch.relu(self.abstraction_encoder(h_next))
+        # PPO-128: Stochastic policy via Gaussian distribution
+        # action_mean is the mean, self.action_log_std provides learnable variance
+        action_std = torch.exp(self.action_log_std).expand_as(action_mean)
+        dist = torch.distributions.Normal(action_mean, action_std)
+        action_sample = dist.rsample()  # Reparameterized sample for gradient flow
+        vector = torch.relu(action_sample)  # Preserve ReLU activation for compatibility
         
-        # Return h_next as (1, B, H) to match old GRU API
-        return vector, comm, meta, value, h_next.unsqueeze(0), prediction, concepts
+        # Calculate log probability of the sampled action
+        log_prob = dist.log_prob(action_sample).sum(dim=-1, keepdim=True)
 
-    def dream(self, start_state, horizon=5):
-        """Rolling out the future in latent space (Imagination Rollout)."""
-        states = []
-        rewards = []
+        comm = torch.sigmoid(self.comm_out(mixed_hidden)) # Signal Vector (Pheromones/Memes)
+        meta = torch.sigmoid(self.meta_out(mixed_hidden)) # [Mate, Adhesion, Punish, Trade]
+        value = self.critic(mixed_hidden)               # Estimated Value
+        prediction = self.predictor(mixed_hidden)       # 3.9 Predicted Next State
         
-        # Ensure start_state is (B, 128)
-        if start_state.dim() == 3: h = start_state.squeeze(0)
-        else: h = start_state
-            
-        for t in range(horizon):
-            # Closed-loop hallucination: noise as innovation signal
-            noise = torch.randn_like(h) * 0.1
-            h = self.rssm_cell(noise, h)
-            
-            r = self.reward_predictor(h)
-            states.append(h)
-            rewards.append(r)
-            
-        return torch.stack(states), torch.stack(rewards)
+        return vector, comm, meta, value, h_next, prediction, concepts, log_prob
 
 # ============================================================
 # 🤖 THE AGENT
@@ -204,7 +237,10 @@ class GenesisAgent:
         else:
             self.hidden_state = torch.zeros(1, 1, 128)
         
-        # V-DV4: Dreamer uses imagination-based learning, no PPO buffer needed
+        # PPO-128: Trajectory buffer for proximal updates
+        self.ppo_buffer = PPOBuffer(max_size=32)
+        self.last_log_prob = None  # Stored from decide() for metabolize()
+        self.ppo_clip_eps = 0.2   # Clipping range for policy ratio
         
         # v5.0.4 Persistent state for Ghost Forward
         self.prev_input = None
@@ -557,12 +593,18 @@ class GenesisAgent:
         self.prev_input = input_tensor.detach()
         self.prev_hidden = self.hidden_state.detach()
         
-        # Forward Pass (V-DV4 Dreamer: 7 returns, no log_prob)
-        vector, comm_vector, meta, value, h_next, prediction, concepts = self.brain(input_tensor, self.hidden_state)
+        # Forward Pass (PPO-128: Now returns log_prob for clipping)
+        vector, comm_vector, meta, value, h_next, prediction, concepts, log_prob = self.brain(input_tensor, self.hidden_state)
         
-        # 5.3 Free Energy Minimization (Active Inference)
-        if random.random() < 0.2:
-             self.reflexes_used += 1
+        # 5.3 Free Energy Minimization (Action Selection)
+        # Instead of just taking the random/actor output, we slightly perturb it 
+        # towards actions that minimize EXPECTED Free Energy (Surprise).
+        # HACK: Using the predictor gradient to find "information seeking" actions
+        if random.random() < 0.2: # 20% Active Inference override
+             # "What action would reduce my uncertainty?"
+             self.reflexes_used += 1 # Tracking "Intuitive" actions as reflexes
+             # Cloud-Optimized: Analytical gradient of uncertainty w.r.t action
+             pass # Complex to implement efficiently, relying on metabolize_free_energy for learning signal
              
         self.hidden_state = h_next.detach()
         self.last_concepts = concepts # 5.8
@@ -571,6 +613,7 @@ class GenesisAgent:
         self.last_value = value
         self.last_prediction = prediction # 3.9 Store for loss calculation
         self.last_input = input_tensor    # Store input for next tick's comparison
+        self.last_log_prob = log_prob     # PPO-128: Store for clipped update
         
         # 2.3 Zahavi Costly Signaling: Generate Proof of Work
         # If signal is complex (high variance), we must prove it's not cheap noise.
@@ -703,8 +746,8 @@ class GenesisAgent:
 
     def metabolize_outcome(self, flux, world_season=0):
         """
-        V-DV4 Active Inference: Learns from reality using Dreaming + Latent Imagination.
-        Replaces PPO with RSSM world model learning for SOTA intelligence.
+        PPO-128: Learns from reality using Proximal Policy Optimization.
+        Replaces the old A2C update with clipped surrogate objective for stability.
         flux: The reward from the Oracle
         """
         if self.last_value is None:
@@ -731,20 +774,21 @@ class GenesisAgent:
         # 3.4 AUDIT FIX: Record tradition for persistence tracking
         self.record_tradition(self.last_vector)
         
-        # ============================================================
-        # V-DV4: ACTIVE INFERENCE via DREAMING
-        # ============================================================
-        recon_loss = torch.tensor(0.0)
+        # 5.3 Free Energy Minimization (FRISTONIAN OVERRIDE) - PPO-128 Ghost Forward
+        predictor_loss = torch.tensor(0.0)
+        recalc_vector = self.last_vector
+        recalc_value = self.last_value
+        new_log_prob = self.last_log_prob  # Default
         
         if self.prev_input is not None and self.prev_hidden is not None:
              # Fresh forward pass using cached inputs from decide()
-             recalc_vector, _, _, recalc_value, _, ghost_prediction, _ = self.brain(self.prev_input, self.prev_hidden)
+             recalc_vector, _, _, recalc_value, _, ghost_prediction, _, new_log_prob = self.brain(self.prev_input, self.prev_hidden)
              
-             # World Model Loss: Reconstruction (How well do we predict reality?)
-             recon_loss = nn.MSELoss()(ghost_prediction, self.last_input.detach())
+             pred_loss_fn = nn.MSELoss()
+             predictor_loss = pred_loss_fn(ghost_prediction, self.last_input.detach())
              
              # 5.0 Self-Monitoring
-             self.prediction_errors.append(recon_loss.item())
+             self.prediction_errors.append(predictor_loss.item())
              if len(self.prediction_errors) > 50: self.prediction_errors.pop(0)
              recent_error = np.mean(self.prediction_errors)
              self.confidence = 1.0 / (1.0 + recent_error)
@@ -762,39 +806,53 @@ class GenesisAgent:
              gradient_magnitude = abs(self.prediction_errors[-1] - self.prediction_errors[-2]) if len(self.prediction_errors) > 1 else 0.0
              season_proxy = world_season % 2 
              self.update_learning_rate_contextual(self.energy, gradient_magnitude, season_proxy)
+
+        # 5.2 Sparsity Loss
+        sparsity_loss = self.brain.actor_mask.sparsity() * 0.01
+        
+        # IQ Reward on fresh graph
+        iq_reward = recalc_vector.std() * 5.0
+        reward = torch.tensor([[flux]], dtype=torch.float32) + iq_reward
+        
+        # ============================================================
+        # PPO-128: CLIPPED SURROGATE OBJECTIVE
+        # ============================================================
+        if recalc_value is not None and new_log_prob is not None:
+            advantage = reward.detach() - recalc_value.detach()
+            
+            # Get old log_prob from buffer (previous step's policy)
+            old_log_prob = self.ppo_buffer.get_old_log_prob()
+            
+            if old_log_prob is not None:
+                # PPO Importance Sampling Ratio (Clamped to prevent explosion)
+                ratio = torch.exp(new_log_prob - old_log_prob)
+                ratio = torch.clamp(ratio, 0.0, 10.0)
+                
+                # Clipped Surrogate Loss (THE PPO CORE)
+                surr1 = ratio * advantage
+                surr2 = torch.clamp(ratio, 1.0 - self.ppo_clip_eps, 1.0 + self.ppo_clip_eps) * advantage
+                actor_loss = -torch.min(surr1, surr2).mean()
+                
+                # Entropy Bonus: Prevents premature convergence
+                # Use the current action_std to compute entropy
+                action_std = torch.exp(self.brain.action_log_std)
+                entropy_bonus = -0.01 * (0.5 * torch.log(2 * np.pi * np.e * action_std.pow(2))).sum()
+            else:
+                # First step: Fall back to simple policy gradient
+                actor_loss = -(advantage * recalc_vector.sum()) + 0.01 * recalc_vector.pow(2).sum()
+                entropy_bonus = torch.tensor(0.0)
+            
+            # Critic Loss (unchanged)
+            critic_loss = 0.5 * (reward - recalc_value).pow(2)
+            
+            # Consolidated Loss: PPO Actor + Critic + Predictor + Sparsity + Entropy
+            total_loss = actor_loss + critic_loss + (predictor_loss * 2.0) + sparsity_loss + entropy_bonus
         else:
-             recalc_vector = self.last_vector
-             recalc_value = self.last_value
+            total_loss = predictor_loss + sparsity_loss
         
-        # Reward target
-        reward = torch.tensor([[flux]], dtype=torch.float32)
-        
-        # --- DREAM: Imagination Rollout (5 steps into the future) ---
-        current_h = self.hidden_state.view(1, 128).detach()
-        dream_states, dream_rewards = self.brain.dream(current_h, horizon=5)
-        
-        # Reward Predictor Loss (Train on real reward)
-        predicted_reward = self.brain.reward_predictor(current_h)
-        reward_loss = nn.MSELoss()(predicted_reward, reward.detach())
-        
-        # Critic Loss (Value prediction)
-        critic_loss = 0.5 * (reward - recalc_value).pow(2).mean()
-        
-        # Actor Loss: Maximize expected dream rewards (TD-Lambda)
-        dream_values = [self.brain.critic(s).detach() for s in dream_states]
-        dream_values_t = torch.stack(dream_values).squeeze()
-        dream_rewards_t = dream_rewards.squeeze().detach()
-        # Simple advantage from dream: sum of imagined rewards + terminal value
-        actor_loss = -(dream_rewards_t.sum() + dream_values_t[-1]) * 0.01
-        
-        # Entropy Loss (Encourage exploration via hidden state diversity)
-        entropy_loss = -0.001 * dream_states[-1].std()
-        
-        # Consolidated Loss: Actor + Critic + Reward + Reconstruction + Entropy
-        total_loss = actor_loss + critic_loss + reward_loss + recon_loss + entropy_loss
-        
-        # Clean up dream tensors to prevent memory leaks
-        del dream_states, dream_rewards, dream_values, dream_values_t, dream_rewards_t
+        # Store transition in PPO buffer (detached to prevent graph leaks)
+        if new_log_prob is not None and recalc_value is not None:
+            self.ppo_buffer.store(new_log_prob, recalc_value, flux)
         
         # Backprop
         self.optimizer.zero_grad()
@@ -838,7 +896,7 @@ class GenesisAgent:
         
         # 8.2 Self-Modeling Accuracy Update
         with torch.no_grad():
-             p_loss_val = recon_loss.item()
+             p_loss_val = predictor_loss.item()
              if np.isfinite(p_loss_val):
                   self.self_model_accuracy = 1.0 / (1.0 + max(0, p_loss_val))
              else:
@@ -946,26 +1004,13 @@ class GenesisAgent:
         return genome
 
     def _apply_genome(self, genome):
-        """Loads brain state from parent(s). V-DV4: Includes key mapping + dimension compatibility."""
+        """Loads brain state from parent(s). PPO-128: Includes dimension compatibility check."""
         # Remove metadata before loading into brain
         brain_state = {k: v for k, v in genome.items() if k not in ['tag', 'caste_gene']}
         
-        # V-DV4 Backward Compatibility: Map legacy keys to new architecture
-        # Old PPO keys -> New Dreamer keys (handles old genomes gracefully)
-        key_map = {
-            'actor_head.weight': 'actor.weight',
-            'actor_head.bias': 'actor.bias',
-            'gru.weight_ih_l0': 'rssm_cell.weight_ih',
-            'gru.weight_hh_l0': 'rssm_cell.weight_hh',
-            'gru.bias_ih_l0': 'rssm_cell.bias_ih',
-            'gru.bias_hh_l0': 'rssm_cell.bias_hh',
-        }
-        mapped_state = {}
-        for k, v in brain_state.items():
-            mapped_state[key_map.get(k, k)] = v
-        
+        # PPO-128 Backward Compatibility: Check if genome matches current architecture
         try:
-            self.brain.load_state_dict(mapped_state)
+            self.brain.load_state_dict(brain_state)
         except RuntimeError:
             # Dimension mismatch (e.g. old 64-dim DNA loaded into 128-dim brain)
             # Gracefully skip genome loading — agent starts fresh with random weights
@@ -989,7 +1034,7 @@ class GenesisAgent:
         
         input_var = self.last_input.clone().requires_grad_(True)
         # Forward pass purely for gradients
-        _, _, _, _, _, pred, _ = self.brain(input_var, self.hidden_state.detach())
+        _, _, _, _, _, pred, _, _ = self.brain(input_var, self.hidden_state.detach())
         
         # Target: Maximize predicted energy (Dim 37 - Energy Signal)
         target_dim = 37 
@@ -2091,7 +2136,7 @@ class GenesisAgent:
         
         # Compress weights - only send the actor layer (most important for behavior)
         with torch.no_grad():
-            for key in ['actor.weight', 'actor.bias', 'rssm_cell.weight_ih', 'comm_out.weight']:
+            for key in ['actor.weight', 'actor.bias', 'gru.weight_ih_l0', 'comm_out.weight']:
                 if key in self.brain.state_dict():
                     death_packet['weights'][key] = self.brain.state_dict()[key].detach().clone()
         
@@ -2202,7 +2247,7 @@ class GenesisAgent:
             self.transfer_domains[source_task] = {
                 k: v.detach().clone() 
                 for k, v in self.brain.state_dict().items()
-                if 'actor' in k or 'rssm_cell' in k
+                if 'actor' in k or 'gru' in k
             }
         
         if target_task in self.transfer_domains:
@@ -2228,7 +2273,7 @@ class GenesisAgent:
         try:
             for _ in range(steps):
                 with torch.no_grad():
-                    _, _, _, value, h_next, pred, _ = self.brain(current_input, simulated_state)
+                    _, _, _, value, h_next, pred, _, _ = self.brain(current_input, simulated_state)
                     
                     # Select action dimension with highest activation
                     action_prefs = pred[:, :21] if pred.size(1) >= 21 else pred
