@@ -1596,10 +1596,16 @@ class GenesisAgent:
         m_older = np.mean(older) if len(older) > 0 else 0
         
         if m_recent > m_older * 1.2:
-            self.learning_rate = min(0.01, self.learning_rate * 1.05)
+            patterns.append("upward_trend")
+            self.meta_lr = min(0.01, self.meta_lr * 1.05)
         elif m_recent < m_older * 0.8:
-            self.learning_rate = max(0.001, self.learning_rate * 0.95)
+            patterns.append("downward_trend")
+            self.meta_lr = max(0.001, self.meta_lr * 0.95)
         
+        # Apply to optimizer
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] = self.meta_lr
+            
         self.discovered_patterns = list(set(self.discovered_patterns + patterns))
         return patterns
     
