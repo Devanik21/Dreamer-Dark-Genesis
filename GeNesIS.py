@@ -4,7 +4,7 @@ import pandas as pd
 import time
 import plotly.express as px
 import plotly.graph_objects as go
-import json  
+import json
 import zipfile
 import io
 import torch
@@ -852,11 +852,11 @@ def collect_full_simulation_dna():
             "trade_volume": sum([getattr(a, 'trade_count', 0) for a in all_agents]),
             "punish_count": sum([getattr(a, 'punish_count', 0) for a in all_agents]),
             "mating_succ": st.session_state.get('successful_births', 0),
-            "average_iq": np.mean([float(torch.std(a.last_vector.detach()))*100 for a in all_agents if a.last_vector is not None]) if all_agents else 0,
+            "average_iq": np.mean([float(torch.std(a.last_vector.detach()))*100 for a in all_agents if a.last_vector is not None]) if any(a.last_vector is not None for a in all_agents) else 0,
             "spatial_spar": len(world.grid) / max(1, world.size**2),
             "homeo_error": np.mean([abs(a.energy - 120) for a in all_agents]) if all_agents else 0,
             "bridge_dens": sum([len(a.neural_bridge_partners) for a in all_agents]) / max(1, n_pop),
-            "substrate_ind": np.mean([a.brain.actor_mask.sparsity().item() for a in all_agents if hasattr(a.brain, 'actor_mask')]) if all_agents else 0,
+            "substrate_ind": np.mean([a.brain.actor_mask.sparsity().item() for a in all_agents if hasattr(a.brain, 'actor_mask')]) if any(hasattr(a.brain, 'actor_mask') for a in all_agents) else 0,
             "mean_phase": np.mean([a.internal_phase for a in all_agents]) if all_agents else 0,
             "metabolic_eff": np.mean([a.energy / max(1, a.age) for a in all_agents]) if all_agents else 0,
             "connect_index": len(world.bonds) / 202 if hasattr(world, 'bonds') else 0,
@@ -2297,9 +2297,9 @@ with tab_omega:
 | **🧪 Innovation R** | `{st.session_state.total_events_count / max(1, st.session_state.world.time_step):.3f}` | **🦠 Viral Fit** | `{np.mean([m.get('fitness', 0.0) for a in all_agents for m in a.meme_pool]) if any([a.meme_pool for a in all_agents]) else 0.0:.2f}` |
 | **📉 Mean Confid** | `{np.mean([a.confidence for a in all_agents]):.3f}` | **📡 Meme Divers** | `{len(set([m.get('id', 'unk') for a in all_agents for m in a.meme_pool])) if any([a.meme_pool for a in all_agents]) else 0}` |
 | **🤝 Trade Volume** | `{sum([getattr(a, 'trade_count', 0) for a in all_agents])}` | **⚖️ Punish Count** | `{sum([getattr(a, 'punish_count', 0) for a in all_agents])}` |
-| **🍼 Mating Succ** | `{st.session_state.get('successful_births', 0)}` | **🧠 Average IQ** | `{np.mean([float(torch.std(a.last_vector.detach()))*100 for a in all_agents if a.last_vector is not None]):.1f}` |
+| **🍼 Mating Succ** | `{st.session_state.get('successful_births', 0)}` | **🧠 Average IQ** | `{np.mean([float(torch.std(a.last_vector.detach()))*100 for a in all_agents if a.last_vector is not None]) if any(a.last_vector is not None for a in all_agents) else 0:.1f}` |
 | **🛰️ Spatial Spar** | `{len(st.session_state.world.grid) / max(1, st.session_state.world.size**2):.4f}` | **🔋 Homeo Error** | `{np.mean([abs(a.energy - 120) for a in all_agents]):.1f}` |
-| **🔗 Bridge Dens** | `{sum([len(a.neural_bridge_partners) for a in all_agents]) / max(1, n_pop):.2f}` | **🧠 Substrate Ind** | `{np.mean([a.brain.actor_mask.sparsity().item() for a in all_agents if hasattr(a.brain, 'actor_mask')]):.3f}` |
+| **🔗 Bridge Dens** | `{sum([len(a.neural_bridge_partners) for a in all_agents]) / max(1, n_pop):.2f}` | **🧠 Substrate Ind** | `{np.mean([a.brain.actor_mask.sparsity().item() for a in all_agents if hasattr(a.brain, 'actor_mask')]) if any(hasattr(a.brain, 'actor_mask') for a in all_agents) else 0:.3f}` |
 | **📈 Mean Phase** | `{np.mean([a.internal_phase for a in all_agents]):.3f}` | **📊 Metabolic Eff** | `{np.mean([a.energy / max(1, a.age) for a in all_agents]):.2f}` |
 | **🔗 Connect Index** | `{len(st.session_state.world.bonds) / 202:.4f}` | **♾️ Max Recursion** | `{max([a.simulation_depth for a in all_agents]):.0f}` |
 | **📡 Backprop Dp** | `{max([a.backprop_depth for a in all_agents]):.0f}` | **🔭 Physics Score** | `{getattr(st.session_state.world, 'physics_mastery_score', 0.0):.3f}` |
@@ -3783,7 +3783,6 @@ with tab_meta:
 if st.session_state.running:
     time.sleep(0.02) 
     st.rerun()
-
 
 
 
