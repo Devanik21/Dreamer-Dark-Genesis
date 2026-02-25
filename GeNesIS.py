@@ -52,7 +52,7 @@ def classify_invention(vector_21):
 # ============================================================
 # ⚙️ SYSTEM CONFIG
 # ============================================================
-st.set_page_config(layout="wide", page_title="Dark Zero Point Genesis", page_icon="🌒")
+st.set_page_config(layout="wide", page_title="Dark Dreamy Zero Point Genesis", page_icon="🌑")
 
 # Custom CSS for "Comfortable UI"
 st.markdown("""
@@ -615,7 +615,7 @@ update_simulation()
 # ============================================================
 # 🖥️ UI RENDERER
 # ============================================================
-st.title("🌒 Dark Zero Point Genesis: 21-Dimensional Sandbox")
+st.title("🌑 Dark Dreamy Zero Point Genesis: 21-Dimensional Sandbox")
 
 # --- HEADER FRAGMENT ---
 with st.container():
@@ -3792,6 +3792,7 @@ with tab_meta:
 if st.session_state.running:
     time.sleep(0.02) 
     st.rerun()
+
 
 
 
