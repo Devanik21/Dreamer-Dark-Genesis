@@ -942,6 +942,10 @@ class GenesisAgent:
         
         # 7.8 Fault Tolerance (Level 7 Metric)
         # Occasionally establish 'silent' backup connections with high-trust IDs
+        social_trust = 0.0
+        if self.last_input is not None:
+             social_trust = self.last_input[0, 38].item()
+             
         if social_trust > 0.9 and random.random() < 0.05:
             # We don't have neighbor list in metabolize, but we have social_memory
             trusted_ids = [id for id, mem in self.social_memory.items() if mem.get('trust', 0) > 0.7]
