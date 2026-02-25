@@ -336,8 +336,10 @@ def update_simulation():
                         break
         
         # 1.10 AUDIT FIX: Track Interaction Intent
-        if trade_val > 0.5: agent.trade_count += 1
-        if punish_val > 0.5: agent.punish_count += 1
+        if trade_val > 0.5: 
+            agent.trade_count = getattr(agent, 'trade_count', 0) + 1
+        if punish_val > 0.5: 
+            agent.punish_count = getattr(agent, 'punish_count', 0) + 1
         
         # 8.5 Aesthetic Action
         if hasattr(agent, 'take_aesthetic_action'):
