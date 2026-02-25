@@ -3402,7 +3402,7 @@ with tab_meta:
                 # Dark Energy ~ Inverse Energy Density
                 _sum_stored = sum([getattr(s, 'stored_energy', 0.0) for s in world.structures.values()])
                 _world_size_sq = max(1, getattr(world, 'size', 40)**2)
-                energy_den_val = int(_sum_stored / _world_size_sq)
+                energy_den_val = int(_sum_stored / _world_size_sq) if (np.isfinite(_sum_stored) and _sum_stored == _sum_stored) else 0
                 dark_energy = f"{1000.0 / max(0.1, energy_den_val + 1.0):.2f}"
                 
                 tachyon_flux = getattr(world, 'quantum_tunneling_events', 0)

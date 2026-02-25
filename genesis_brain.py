@@ -167,6 +167,11 @@ class GenesisBrain(nn.Module):
         prediction = self.predictor(h_next)
         concepts = torch.relu(self.abstraction_encoder(h_next))
         
+        # Sanitize: prevent NaN/Inf from escaping into agent state
+        h_next = torch.nan_to_num(h_next, nan=0.0, posinf=1.0, neginf=-1.0)
+        vector = torch.nan_to_num(vector, nan=0.0, posinf=1.0, neginf=0.0)
+        value  = torch.nan_to_num(value,  nan=0.0, posinf=1.0, neginf=-1.0)
+        
         # Compatibility: approximate log_prob from action activations
         log_prob = -vector.pow(2).sum(dim=-1, keepdim=True) * 0.5
         
@@ -773,8 +778,14 @@ class GenesisAgent:
         # Reward Signal
         self.last_reward = flux
         thought_loudness = self.last_vector.sum().item()
+        if not np.isfinite(thought_loudness):
+            thought_loudness = 0.0
         thought_cost = thought_loudness * 0.05
-        self.energy -= thought_cost
+        if np.isfinite(thought_cost):
+            self.energy -= thought_cost
+        # Final NaN sanitizer: if energy ever becomes NaN, restore it
+        if not np.isfinite(self.energy):
+            self.energy = 50.0
         
         # 3.4 AUDIT FIX: Record tradition for persistence tracking
         self.record_tradition(self.last_vector)
@@ -2370,6 +2381,7 @@ class GenesisAgent:
         if hasattr(self, 'role_history'):
             self.role_history.append(self.role)
             if len(self.role_history) > 100: self.role_history.pop(0)
+
 
 
 
