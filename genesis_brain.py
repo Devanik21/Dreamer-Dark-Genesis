@@ -139,7 +139,7 @@ class GenesisBrain(nn.Module):
                     nn.init.constant_(m.bias, 0.0)
         
         # 1.8 Compatibility: Mock Actor Mask for frontend metrics
-        self.actor_mask = type('MockMask', (), {'sparsity': lambda: torch.tensor([0.0])})()
+        self.actor_mask = type('MockMask', (), {'sparsity': lambda x: torch.tensor([0.0])})()
 
     def forward(self, x, hidden):
         # Ensure hidden state is correct shape (B, 128) for GRUCell
