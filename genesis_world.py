@@ -305,6 +305,7 @@ class GenesisWorld:
         self.size = size
         self.grid = {} 
         self.agents = {} 
+        self.agent_grid = {} # 🔧 OPTIMIZATION: (x,y) -> [agent_id]
         self.time_step = 0
         self.current_season = 0
         self.season_timer = 0
@@ -472,6 +473,8 @@ class GenesisWorld:
                     gradients.append(self.grid[(nx, ny)].get_nutrition(self.current_season))
                 else:
                     gradients.append(0.0)
+        if not gradients:
+            return torch.zeros(1)
         return torch.tensor([np.mean(gradients)], dtype=torch.float32)
 
     def update_pheromones(self):
@@ -827,10 +830,8 @@ class GenesisWorld:
         """1.10 Complete Entropy Defiance: Track system-wide entropy changes."""
         # 1. Agent Weight Entropy (Neural Compression)
         if self.agents:
-            weights = []
-            for a in list(self.agents.values()):
-                weights.append(a.calculate_weight_entropy())
-            self.agent_entropy = np.mean(weights)
+            weights = [a.calculate_weight_entropy() for a in list(self.agents.values())]
+            self.agent_entropy = np.mean(weights) if weights else 0.0
         
         # 2. Environmental Entropy (Resource Distribution)
         # Using a simple grid occupancy entropy
@@ -1107,6 +1108,27 @@ class GenesisWorld:
     # 🐝 LEVEL 7: COLLECTIVE MANIFOLD METHODS
     # ============================================================
     
+    def _update_agent_grid(self):
+        """🔧 OPTIMIZATION: Rebuild spatial grid for O(1) neighbor lookups."""
+        self.agent_grid = {}
+        for agent in self.agents.values():
+            pos = (int(agent.x), int(agent.y))
+            if pos not in self.agent_grid:
+                self.agent_grid[pos] = []
+            self.agent_grid[pos].append(agent.id)
+
+    def get_neighbors(self, x, y, radius):
+        """🔧 OPTIMIZATION: Retrieve neighbors using spatial grid."""
+        neighbors = []
+        rx, ry = int(x), int(y)
+        for dx in range(-radius, radius + 1):
+            for dy in range(-radius, radius + 1):
+                nx, ny = (rx + dx) % self.size, (ry + dy) % self.size
+                if (nx, ny) in self.agent_grid:
+                    for aid in self.agent_grid[(nx, ny)]:
+                        neighbors.append(self.agents[aid])
+        return neighbors
+
     def kuramoto_global_step(self):
         """7.1 Kuramoto Synchronization: Global phase update."""
         if len(self.agents) < 2:
@@ -1117,9 +1139,9 @@ class GenesisWorld:
         for agent in self.agents.values():
             if not hasattr(agent, 'kuramoto_phase'):
                 continue
-            neighbors = [a for a in self.agents.values() 
-                         if a.id != agent.id and 
-                         abs(a.x - agent.x) <= 3 and abs(a.y - agent.y) <= 3]
+            neighbors = self.get_neighbors(agent.x, agent.y, 3)
+            # Filter self
+            neighbors = [n for n in neighbors if n.id != agent.id]
             agent.kuramoto_update(neighbors)
         
         # Calculate order parameter: r = |<e^{iθ}>|

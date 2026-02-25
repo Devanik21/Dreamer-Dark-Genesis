@@ -52,7 +52,7 @@ def classify_invention(vector_21):
 # ============================================================
 # ⚙️ SYSTEM CONFIG
 # ============================================================
-st.set_page_config(layout="wide", page_title="Dark Dreamy Zero Point Genesis", page_icon="🌑")
+st.set_page_config(layout="wide", page_title="Dark Zero Point Genesis", page_icon="🌒")
 
 # Custom CSS for "Comfortable UI"
 st.markdown("""
@@ -122,6 +122,7 @@ def update_simulation():
         return
 
     world = st.session_state.world
+    world._update_agent_grid() # 🔧 OPTIMIZATION: Rebuild spatial lookup
     world.step()
     
     # 🌍 LEVEL 6-10: Execute all advanced features
@@ -198,11 +199,14 @@ def update_simulation():
         
         # 2.6 Reciprocal Altruism: Social Trust Context
         # Mean trust for visible neighbors
-        neighbors = [world.agents[oid] for oid in list(world.agents.keys()) if oid != agent.id and abs(world.agents[oid].x - agent.x) <= 2 and abs(world.agents[oid].y - agent.y) <= 2]
+        neighbors = world.get_neighbors(agent.x, agent.y, 2)
+        # Filter self
+        neighbors = [n for n in neighbors if n.id != agent.id]
+        
         social_trust = 0.0
         if neighbors:
             trust_values = [agent.social_memory.get(n.id, 0.5) for n in neighbors]
-            social_trust = np.mean(trust_values) / 2.0 # Scale to roughly 0-1
+            social_trust = np.mean(trust_values) / 2.0 if trust_values else 0.0 # Scale to roughly 0-1
             
             # 3.1 Social Learning (Imitation)
             # If agent is struggling (low energy) or young, imitate successful neighbor
@@ -615,7 +619,7 @@ update_simulation()
 # ============================================================
 # 🖥️ UI RENDERER
 # ============================================================
-st.title("🌑 Dark Dreamy Zero Point Genesis: 21-Dimensional Sandbox")
+st.title("🌒 Dark Zero Point Genesis: 21-Dimensional Sandbox")
 
 # --- HEADER FRAGMENT ---
 with st.container():
@@ -3792,7 +3796,6 @@ with tab_meta:
 if st.session_state.running:
     time.sleep(0.02) 
     st.rerun()
-
 
 
 
