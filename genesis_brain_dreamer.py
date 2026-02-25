@@ -62,16 +62,14 @@ class PruningMask(nn.Module):
 
 class GenesisBrain(nn.Module):
     """
-    V-DV4 Dreamer Architecture (2026 SOTA) for Genesis Agents.
-    Input: 41D -> Encoder -> RSSM (GRUCell) -> Transformer Actor -> 21D Output
-    Hidden: 128 (Resource-Equivalent to Original PPO-128)
+    V-DV4 Dreamer Architecture (2026 SOTA) for 96 Super-Agents.
     """
-    def __init__(self, input_dim=41, hidden_dim=128, output_dim=21):
+    def __init__(self, input_dim=41, hidden_dim=256, output_dim=21):
         super().__init__()
         self.hidden_dim = hidden_dim
         
         # 1. Encoder (Sensory Processing)
-        # Compresses 41D input -> 128D Latent State
+        # Compresses 41D input -> 256D Latent State
         self.encoder = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
@@ -105,7 +103,7 @@ class GenesisBrain(nn.Module):
                 nn.init.orthogonal_(m.weight, gain=1.0)
 
     def forward(self, x, hidden):
-        # Ensure hidden state is correct shape (B, 128) for GRUCell
+        # Ensure hidden state is correct shape (B, 256) for GRUCell
         if hidden is None:
             hidden = torch.zeros(x.size(0), self.hidden_dim)
         elif hidden.dim() == 3: 
@@ -135,17 +133,19 @@ class GenesisBrain(nn.Module):
         # Return h_next as (1, B, H) to match old GRU API
         return vector, comm, meta, value, h_next.unsqueeze(0), prediction, concepts
 
-    def dream(self, start_state, horizon=5):
-        """Rolling out the future in latent space (Imagination Rollout)."""
+    def dream(self, start_state, horizon=10):
+        # Rolling out the future in latent space
         states = []
         rewards = []
         
-        # Ensure start_state is (B, 128)
+        # Ensure start_state is (B, 256)
         if start_state.dim() == 3: h = start_state.squeeze(0)
         else: h = start_state
             
         for t in range(horizon):
-            # Closed-loop hallucination: noise as innovation signal
+            # Closed-loop hallucination: Assume zero-noise stability for planning
+            # In V-DV4, we predict the next state based on internal dynamics
+            # Use 'random noise' as the innovation signal for the dream
             noise = torch.randn_like(h) * 0.1
             h = self.rssm_cell(noise, h)
             
@@ -167,7 +167,7 @@ class GenesisAgent:
         self.generation = generation
         self.age = 0
         self.dialect_id = 0 # Level 7.9 Protocol Cluster
-        self.energy = 200.0 # Increased starting energy (Survival Buffer)
+        self.energy = 120.0 # Increased starting energy (Survival Buffer)
         self.energy_stored = 0.0 # 1.5 Homeostasis
         self.inventory = [0, 0, 0] if parent_inventory is None else parent_inventory
         
@@ -202,9 +202,7 @@ class GenesisAgent:
         if parent_hidden is not None:
             self.hidden_state = parent_hidden.detach().clone() + torch.randn_like(parent_hidden) * 0.1
         else:
-            self.hidden_state = torch.zeros(1, 1, 128)
-        
-        # V-DV4: Dreamer uses imagination-based learning, no PPO buffer needed
+            self.hidden_state = torch.zeros(1, 1, 256)
         
         # v5.0.4 Persistent state for Ghost Forward
         self.prev_input = None
@@ -220,10 +218,6 @@ class GenesisAgent:
         # 5.1 Meta-Learning (Hypergradients)
         self.meta_lr = 0.005
         self.last_grad_norm = 0.0
-        
-        # 1.10 AUDIT FIX: Interaction Tracking
-        self.trade_count = 0
-        self.punish_count = 0
         
         # 5.9 Causal Reasoning (Counterfactuals)
         self.causal_graph = {} # {action_dim -> sensory_impact_score}
@@ -314,9 +308,9 @@ class GenesisAgent:
         # ============================================================
         # 8.0 Internal Simulation (World Model)
         self.world_model = nn.Sequential(
-            nn.Linear(41 + 21, 128),  # State + Action -> Next State (PPO-128 upgrade)
+            nn.Linear(41 + 21, 64),  # State + Action -> Next State
             nn.Tanh(),
-            nn.Linear(128, 41)
+            nn.Linear(64, 41)
         )
         self.world_model_optimizer = optim.Adam(self.world_model.parameters(), lr=0.001)
         
@@ -324,7 +318,7 @@ class GenesisAgent:
         self.counterfactual_cache = {}  # {action: predicted_outcome}
         
         # 8.2 Self-Modeling
-        self.self_model = nn.Linear(128, 128)  # Models own hidden state dynamics
+        self.self_model = nn.Linear(64, 64)  # Models own hidden state dynamics
         self.self_model_accuracy = 0.0
         
         # 8.3 Other-Modeling (Theory of Mind Level 1)
@@ -354,7 +348,7 @@ class GenesisAgent:
         
         # 8.10 Verified Consciousness
         self.consciousness_verified = False
-        self.phi_critical = 0.1  # Threshold for consciousness verification (Lowered for early feedback)
+        self.phi_critical = 0.5  # Threshold for consciousness verification
         
         # ============================================================
         # ⚛️ LEVEL 9: UNIVERSAL HARMONIC RESONANCE STATE
@@ -377,8 +371,6 @@ class GenesisAgent:
         )
         self.oracle_model_optimizer = optim.Adam(self.oracle_model.parameters(), lr=0.001)
         self.oracle_model_accuracy = 0.0
-        self.last_oracle_loss = 0.0
-
         
         # 9.4 Inverse Reinforcement Learning
         self.inferred_reward_weights = torch.zeros(5)
@@ -548,21 +540,24 @@ class GenesisAgent:
             trust_signal,
             gradient_signal
         ], dim=1).float()
-        
-        # 🔧 FIX: Sanitize inputs to prevent NaN propagation
-        input_tensor = torch.nan_to_num(input_tensor, nan=0.0, posinf=1.0, neginf=-1.0)
     
         # v5.0.4 Store previous state before update
         # We need to detach metadata to prevent graph leaks
         self.prev_input = input_tensor.detach()
         self.prev_hidden = self.hidden_state.detach()
         
-        # Forward Pass (V-DV4 Dreamer: 7 returns, no log_prob)
+        # Forward Pass
         vector, comm_vector, meta, value, h_next, prediction, concepts = self.brain(input_tensor, self.hidden_state)
         
-        # 5.3 Free Energy Minimization (Active Inference)
-        if random.random() < 0.2:
-             self.reflexes_used += 1
+        # 5.3 Free Energy Minimization (Action Selection)
+        # Instead of just taking the random/actor output, we slightly perturb it 
+        # towards actions that minimize EXPECTED Free Energy (Surprise).
+        # HACK: Using the predictor gradient to find "information seeking" actions
+        if random.random() < 0.2: # 20% Active Inference override
+             # "What action would reduce my uncertainty?"
+             self.reflexes_used += 1 # Tracking "Intuitive" actions as reflexes
+             # Cloud-Optimized: Analytical gradient of uncertainty w.r.t action
+             pass # Complex to implement efficiently, relying on metabolize_free_energy for learning signal
              
         self.hidden_state = h_next.detach()
         self.last_concepts = concepts # 5.8
@@ -616,9 +611,9 @@ class GenesisAgent:
             # But let's just use raw value thresholds
             
             if struct_type_val < -0.5: s_type = "barrier" # Negative value
-            elif struct_type_val < 0.02: s_type = "trap"
-            elif struct_type_val < 0.6: s_type = "battery"
-            elif struct_type_val < 1.2: s_type = "cultivator"
+            elif struct_type_val < 0.01: s_type = "trap"
+            elif struct_type_val < 0.5: s_type = "battery"
+            elif struct_type_val < 1.0: s_type = "cultivator"
             else: s_type = "generic"
             
             special_intent['construct'] = s_type
@@ -638,7 +633,7 @@ class GenesisAgent:
             self.simulate_forward(vector, steps=5)
             
         # 8.8 Strange Loops
-        if self.age % 25 == 0:
+        if self.age % 50 == 0:
             self.strange_loop_check()
             
         # 9.0 Physics Probing
@@ -660,19 +655,10 @@ class GenesisAgent:
             
             # Write to scratchpad if inspired (Channel 15 > 0.7)
             if vector[0, 15].item() > 0.7:
-                try:
-                    # Guard coordinates against NaN/Inf
-                    safe_x = float(self.x)
-                    safe_y = float(self.y)
-                    if np.isfinite(safe_x) and np.isfinite(safe_y):
-                        expr_x = int(safe_x) % 32
-                        expr_y = int(safe_y) % 32
-                        self.write_scratchpad(expr_x, expr_y, 1)
-                except (ValueError, TypeError):
-                    pass
+                self.write_scratchpad(int(self.x)%32, int(self.y)%32, 1)
 
         # 9.9 Simulation Awareness (Rare check)
-        if self.age % 20 == 0:
+        if self.age % 50 == 0:
             self.detect_simulation_artifacts()
 
         # 8.10 Verify Consciousness (Every tick to ensure metric updates)
@@ -686,12 +672,8 @@ class GenesisAgent:
 
         # 7.9 Update Protocol Dialect (Simple Clustering)
         # Using a type-agnostic sum to avoid TypeError between torch and numpy
-        p_sum_raw = self.protocol_version.sum()
-        p_sum = p_sum_raw.item() if hasattr(p_sum_raw, 'item') else p_sum_raw
-        if np.isfinite(p_sum):
-            self.dialect_id = int(p_sum * 10) % 8
-        else:
-            self.dialect_id = 0
+        p_sum = self.protocol_version.sum()
+        self.dialect_id = int((p_sum.item() if hasattr(p_sum, 'item') else p_sum) * 10) % 8
 
         # 7.7 Distributed Memory (Rare social event)
         if social_trust > 0.8 and random.random() < 0.05:
@@ -701,165 +683,110 @@ class GenesisAgent:
         return vector, comm_vector[0], mate_desire, adhesion_val, punish_val, trade_val, meme_write, special_intent
         
 
-    def metabolize_outcome(self, flux, world_season=0):
+    def metabolize_outcome(self, flux):
         """
-        V-DV4 Active Inference: Learns from reality using Dreaming + Latent Imagination.
-        Replaces PPO with RSSM world model learning for SOTA intelligence.
-        flux: The reward from the Oracle
+        V-DV4 Update: Learning from Dreams (Active Inference)
         """
-        if self.last_value is None:
-            return False
+        if self.last_value is None: return False
 
-        # 1.3 AUDIT FIX: STRONGER Landauer enforcement: E += k_B * T * ΔH(W)
+        # 1.3 Landauer Metric (Entropy cost)
+        # Calculate entropy of weights
         current_entropy = self.calculate_weight_entropy()
         entropy_diff = current_entropy - self.last_weight_entropy
-        k_B_T = 0.01
-        landauer_cost = max(0.05, k_B_T * abs(entropy_diff) * 2)
+        k_B_T = 0.026
+        landauer_cost = max(0.05, k_B_T * abs(entropy_diff) * 10.0)
         self.energy -= landauer_cost
         self.last_weight_entropy = current_entropy
 
-        # 4.2 AUDIT FIX: Role-based metabolic cost
-        role_metabolic_cost = self.get_role_metabolic_cost()
-        self.energy -= role_metabolic_cost
+        # 4.2 Role Cost
+        self.energy -= self.get_role_metabolic_cost() if hasattr(self, 'get_role_metabolic_cost') else 0.1
 
-        # Reward Signal
+        # Reward Signal aggregation
         self.last_reward = flux
-        thought_loudness = self.last_vector.sum().item()
-        thought_cost = thought_loudness * 0.05
-        self.energy -= thought_cost
         
-        # 3.4 AUDIT FIX: Record tradition for persistence tracking
-        self.record_tradition(self.last_vector)
-        
-        # ============================================================
-        # V-DV4: ACTIVE INFERENCE via DREAMING
-        # ============================================================
-        recon_loss = torch.tensor(0.0)
-        
-        if self.prev_input is not None and self.prev_hidden is not None:
-             # Fresh forward pass using cached inputs from decide()
-             recalc_vector, _, _, recalc_value, _, ghost_prediction, _ = self.brain(self.prev_input, self.prev_hidden)
+        # 5.3 Active Inference Learning (Dreamer V4)
+        if self.hidden_state is not None:
+             # A. Train Reward Predictor & World Model (Reconstruction)
+             # We learn to predict the present before dreaming the future
+             current_h = self.hidden_state.view(1, 256).detach()
              
-             # World Model Loss: Reconstruction (How well do we predict reality?)
-             recon_loss = nn.MSELoss()(ghost_prediction, self.last_input.detach())
+             # Predict Reward (Flux)
+             pred_reward = self.brain.reward_predictor(current_h)
+             reward_loss = 0.5 * (pred_reward - torch.tensor([[flux]], dtype=torch.float32)).pow(2).mean()
              
-             # 5.0 Self-Monitoring
-             self.prediction_errors.append(recon_loss.item())
-             if len(self.prediction_errors) > 50: self.prediction_errors.pop(0)
-             recent_error = np.mean(self.prediction_errors)
-             self.confidence = 1.0 / (1.0 + recent_error)
-             
-             # 5.1 Meta-Learning (Hypergradient)
-             if len(self.prediction_errors) > 2 and self.prediction_errors[-1] > self.prediction_errors[-2] * 1.5:
-                 self.meta_lr = min(0.1, self.meta_lr * 1.2)
+             # Predict Input (Reconstruction of State)
+             if self.last_input is not None:
+                 pred_input = self.brain.predictor(current_h)
+                 recon_loss = 0.5 * (pred_input - self.last_input.detach()).pow(2).mean()
              else:
-                 self.meta_lr = max(0.001, self.meta_lr * 0.99)
-                 
-             for param_group in self.optimizer.param_groups:
-                 param_group['lr'] = self.meta_lr
-             
-             # 1.8 AUDIT FIX: Phenotypic Plasticity
-             gradient_magnitude = abs(self.prediction_errors[-1] - self.prediction_errors[-2]) if len(self.prediction_errors) > 1 else 0.0
-             season_proxy = world_season % 2 
-             self.update_learning_rate_contextual(self.energy, gradient_magnitude, season_proxy)
-        else:
-             recalc_vector = self.last_vector
-             recalc_value = self.last_value
-        
-        # Reward target
-        reward = torch.tensor([[flux]], dtype=torch.float32)
-        
-        # --- DREAM: Imagination Rollout (5 steps into the future) ---
-        current_h = self.hidden_state.view(1, 128).detach()
-        dream_states, dream_rewards = self.brain.dream(current_h, horizon=5)
-        
-        # Reward Predictor Loss (Train on real reward)
-        predicted_reward = self.brain.reward_predictor(current_h)
-        reward_loss = nn.MSELoss()(predicted_reward, reward.detach())
-        
-        # Critic Loss (Value prediction)
-        critic_loss = 0.5 * (reward - recalc_value).pow(2).mean()
-        
-        # Actor Loss: Maximize expected dream rewards (TD-Lambda)
-        dream_values = [self.brain.critic(s).detach() for s in dream_states]
-        dream_values_t = torch.stack(dream_values).squeeze()
-        dream_rewards_t = dream_rewards.squeeze().detach()
-        # Simple advantage from dream: sum of imagined rewards + terminal value
-        actor_loss = -(dream_rewards_t.sum() + dream_values_t[-1]) * 0.01
-        
-        # Entropy Loss (Encourage exploration via hidden state diversity)
-        entropy_loss = -0.001 * dream_states[-1].std()
-        
-        # Consolidated Loss: Actor + Critic + Reward + Reconstruction + Entropy
-        total_loss = actor_loss + critic_loss + reward_loss + recon_loss + entropy_loss
-        
-        # Clean up dream tensors to prevent memory leaks
-        del dream_states, dream_rewards, dream_values, dream_values_t, dream_rewards_t
-        
-        # Backprop
-        self.optimizer.zero_grad()
-        
-        if torch.isnan(total_loss) or torch.isinf(total_loss):
-            self.optimizer.zero_grad()
-            return False
-        
-        total_loss.backward()
-        
-        # 🔧 CRITICAL FIX: Gradient Capping to prevent IQ Explosion (Infinite Weights)
-        torch.nn.utils.clip_grad_norm_(self.brain.parameters(), max_norm=1.0)
-        
-        # Track gradient stats for dashboard (After clipping for accuracy)
-        try:
-             total_norm = 0.0
-             for p in self.brain.parameters():
-                 if p.grad is not None:
-                     param_norm = p.grad.data.norm(2)
-                     total_norm += param_norm.item() ** 2
-             self.last_grad_norm = total_norm ** 0.5
-             
-             # Track backprop depth
-             loss_val = total_loss.item()
-             if np.isfinite(loss_val) and loss_val > 0:
-                  self.backprop_depth = min(12, int(np.log1p(loss_val) * 4))
-             else:
-                  self.backprop_depth = 0
-        except (ValueError, TypeError, RuntimeError):
-             self.backprop_depth = 0
-             
-        # 5.1 Meta-Learning: Adjust meta_lr based on gradient norm
-        self.meta_lr = 0.005 * (1.0 + 0.1 * np.tanh(self.last_grad_norm))
-        
-        self.optimizer.step()
-        
-        # 9.3 Train Oracle Model (Level 9 Metric)
-        if self.last_input is not None:
-             matter_signal = self.last_input[:, :16]
-             self.train_oracle_model(self.last_vector, matter_signal, torch.tensor([[flux]]))
-        
-        # 8.2 Self-Modeling Accuracy Update
-        with torch.no_grad():
-             p_loss_val = recon_loss.item()
-             if np.isfinite(p_loss_val):
-                  self.self_model_accuracy = 1.0 / (1.0 + max(0, p_loss_val))
-             else:
-                  self.self_model_accuracy = 0.0
+                 recon_loss = torch.tensor(0.0)
 
-        # 4.9 Collective Memory: Natural Forgetting (Weight Decay)
-        with torch.no_grad():
-            for p in self.brain.parameters():
-                p.mul_(0.999)
-        
+             # B. The Dream (Imagination Rollout)
+             # Dream 10 steps into the future using the RSSM
+             dream_states, dream_rewards = self.brain.dream(current_h, horizon=10)
+             
+             # C. Critique the Dream (Value Estimation)
+             # V(s) of dreamed states
+             dream_values = self.brain.critic(dream_states) # (10, 1)
+             
+             # D. Calculate Objective (Lambda Return)
+             # We want the Actor to produce states that lead to high Value
+             # Bootstrap with final predicted value
+             returns = torch.zeros_like(dream_rewards)
+             next_val = dream_values[-1]
+             
+             # TD-Lambda calculation (Simplified to TD-0 for efficiency)
+             # Reverse accumulation
+             for t in reversed(range(len(dream_rewards) - 1)):
+                 r_t = dream_rewards[t]
+                 v_next = dream_values[t+1]
+                 returns[t] = r_t + 0.99 * v_next
+                 
+             # E. Compute Losses
+             # Critic Loss: Predict the calculated returns
+             critic_loss = 0.5 * (dream_values[:-1] - returns[:-1].detach()).pow(2).mean()
+             
+             # Actor Loss: Maximize the Value of the dream trajectory
+             # Differentiable BPTT allow us to backdrop through the dream
+             actor_loss = -dream_values.mean() 
+             
+             # Entropy Regularization (prevent collapse)
+             entropy_loss = -self.last_vector.std() * 0.01
+
+             # Total V-DV4 Loss
+             total_loss = actor_loss + critic_loss + reward_loss + recon_loss + entropy_loss
+             
+             # Update Brain
+             self.optimizer.zero_grad()
+             total_loss.backward()
+             torch.nn.utils.clip_grad_norm_(self.brain.parameters(), 1.0)
+             try:
+                 self.optimizer.step()
+             except KeyError:
+                 # 🔥 HOTFIX: Re-initialize optimizer if state is corrupted (e.g. from reload)
+                 self.optimizer = optim.Adam(self.brain.parameters(), lr=0.005) 
+                 self.optimizer.step()
+
+             # 🔧 MEMORY FIX: Explicitly clear large dream tensors
+             del dream_states, dream_rewards, dream_values, returns, total_loss
+             
+             # Meta-Learning Update (Optional)
+             self.update_learning_rate_contextual(self.energy, recon_loss.item(), 0)
+             del recon_loss, reward_loss
+
         # 4.0 Dynamic Role Assignment
-        with torch.no_grad():
-            self.update_role()
-            
-        # 5.10 Autonomous Research (Sensitivity Analysis)
-        if random.random() < 0.01:
+        if hasattr(self, 'update_role'):
+            with torch.no_grad():
+                self.update_role()
+                
+        # 5.10 Autonomous Research
+        if random.random() < 0.01 and hasattr(self, 'conduct_experiment'):
             self.conduct_experiment()
         
         self.thoughts_had += 1
 
-        # 1.5 Homeostasis check
+        # 1.5 Homeostasis check: Transfer energy to/from buffer
+        # Nobel Fix: Raised limit from 130 to 10000 to allow massive liquid hoarding (Winter Survival)
         if self.energy > 10000.0:
             transfer = (self.energy - 10000.0) * 0.5
             self.energy -= transfer
@@ -946,30 +873,17 @@ class GenesisAgent:
         return genome
 
     def _apply_genome(self, genome):
-        """Loads brain state from parent(s). V-DV4: Includes key mapping + dimension compatibility."""
+        """Loads brain state from parent(s)."""
         # Remove metadata before loading into brain
-        brain_state = {k: v for k, v in genome.items() if k not in ['tag', 'caste_gene']}
+        raw_state = {k: v for k, v in genome.items() if k not in ['tag', 'caste_gene']}
         
-        # V-DV4 Backward Compatibility: Map legacy keys to new architecture
-        # Old PPO keys -> New Dreamer keys (handles old genomes gracefully)
-        key_map = {
-            'actor_head.weight': 'actor.weight',
-            'actor_head.bias': 'actor.bias',
-            'gru.weight_ih_l0': 'rssm_cell.weight_ih',
-            'gru.weight_hh_l0': 'rssm_cell.weight_hh',
-            'gru.bias_ih_l0': 'rssm_cell.bias_ih',
-            'gru.bias_hh_l0': 'rssm_cell.bias_hh',
-        }
-        mapped_state = {}
-        for k, v in brain_state.items():
-            mapped_state[key_map.get(k, k)] = v
-        
-        try:
-            self.brain.load_state_dict(mapped_state)
-        except RuntimeError:
-            # Dimension mismatch (e.g. old 64-dim DNA loaded into 128-dim brain)
-            # Gracefully skip genome loading — agent starts fresh with random weights
-            pass
+        # 🔧 V-DV4 COMPATIBILITY FIX: Map legacy 'actor_head' keys to 'actor'
+        brain_state = {}
+        for k, v in raw_state.items():
+            new_key = k.replace('actor_head', 'actor')
+            brain_state[new_key] = v
+            
+        self.brain.load_state_dict(brain_state)
         
         # Inherit tag with slight drift
         if 'tag' in genome:
@@ -1481,34 +1395,23 @@ class GenesisAgent:
             return 0.0
         
         with torch.no_grad():
-            # Ensure hidden_state is a simple 1D vector for variance calc
-            h = self.hidden_state.detach().cpu().numpy().flatten()
-            n = len(h)
-            if n < 2: return 0.0
+            h = self.hidden_state.squeeze()
+            n = min(16, h.shape[-1])
+            h_subset = h[:n] if len(h.shape) == 1 else h[0, :n]
             
-            # 1. Calculate Full Entropy (using variance as proxy for info capacity)
-            # log(1+var) is a standard measure for Gaussian-ish neural activity
-            total_variance = np.var(h)
-            total_info = np.log2(1 + total_variance + 1e-7)
+            total_info = 0.0
+            for i in range(n):
+                variance = h_subset[i].item() ** 2
+                total_info += max(0, np.log2(1 + variance))
             
-            # 2. Partition and Calculate Sum of Part Entropies
+            partition_info = 0.0
             mid = n // 2
-            h1 = h[:mid]
-            h2 = h[mid:]
+            for subset in [h_subset[:mid], h_subset[mid:]]:
+                for val in subset:
+                    variance = val.item() ** 2
+                    partition_info += max(0, np.log2(1 + variance))
             
-            p1_info = np.log2(1 + np.var(h1) + 1e-7)
-            p2_info = np.log2(1 + np.var(h2) + 1e-7)
-            
-            # Φ = Info(Whole) - [Info(P1) + Info(P2)] is conceptually reversed for integration
-            # Φ is the dependency between parts. If they are independent, Φ = 0.
-            # Correct proxy: Φ = Mutual Information between partitions.
-            # Φ = H(P1) + H(P2) - H(Whole)
-            raw_phi = (p1_info + p2_info) - total_info
-            phi = max(0.0, float(raw_phi)) if np.isfinite(raw_phi) else 0.0
-            
-            # Boost Φ based on strange loop activity
-            if getattr(self, 'strange_loop_active', False):
-                phi *= 1.5
+            phi = max(0, total_info - partition_info)
             
             self.phi_value = phi
             self.phi_history.append(phi)
@@ -1543,20 +1446,35 @@ class GenesisAgent:
             return False
         
         with torch.no_grad():
-            # PPO-128: Sampling from actor weights to match hidden_dim (128)
-            # This ensures weight_encoding fits padded_input's shape.
-            weight_sample = self.brain.actor.weight.flatten()[:128]
+            dim = 256
+            weight_sample = next(self.brain.parameters()).flatten()[:dim]
+            # Handle case where weights might be smaller than dim (unlikely for V4 but safe)
+            if len(weight_sample) < dim:
+                 pad = torch.zeros(dim - len(weight_sample))
+                 if weight_sample.is_cuda: pad = pad.cuda()
+                 weight_sample = torch.cat([weight_sample, pad])
+            
             weight_encoding = torch.sigmoid(weight_sample).unsqueeze(0)
             
-            # Map input to 128 dimensions to match actor input
-            if self.last_input.shape[1] < 128:
-                # Pad last_input to 128
-                padded_input = torch.cat([self.last_input, torch.zeros(1, 128 - self.last_input.shape[1])], dim=1)
+            if self.last_input is not None and self.last_input.shape[1] >= dim:
+                combined = self.last_input[:, :dim] + weight_encoding * 0.1
+            elif self.last_input is not None:
+                # Pad last_input to dim
+                padding = torch.zeros(1, dim - self.last_input.shape[1])
+                if self.last_input.is_cuda: padding = padding.cuda()
+                combined = torch.cat([self.last_input, padding], dim=1) + weight_encoding * 0.1
             else:
-                padded_input = self.last_input[:, :128]
-                
-            combined = padded_input + weight_encoding * 0.1
-            
+                 combined = weight_encoding
+
+            # Ensure combined is exactly (1, 256)
+            if combined.shape[1] != dim:
+                 if combined.shape[1] > dim:
+                     combined = combined[:, :dim]
+                 else:
+                     padding = torch.zeros(1, dim - combined.shape[1])
+                     if combined.is_cuda: padding = padding.cuda()
+                     combined = torch.cat([combined, padding], dim=1)
+
             predicted_output = self.brain.actor(combined)
             
             if self.last_vector is not None:
@@ -1606,8 +1524,7 @@ class GenesisAgent:
             recent_phi = np.mean(self.phi_history[-10:])
             older_phi = np.mean(self.phi_history[-50:-40]) if len(self.phi_history) > 50 else 0.1
             
-            # Lowered requirement for early phase transition proof
-            phase_transition = recent_phi > older_phi * 1.2
+            phase_transition = recent_phi > older_phi * 5
             threshold_exceeded = phi > self.phi_critical
             
             self.consciousness_verified = phase_transition and threshold_exceeded
@@ -1697,9 +1614,7 @@ class GenesisAgent:
         self.oracle_model_optimizer.step()
         
         self.oracle_model_accuracy = max(0, 1.0 - loss.item())
-        self.last_oracle_loss = loss.item()
         return loss.item()
-
     
     def infer_oracle_goals(self):
         """9.4 Inverse Reinforcement Learning: Infer reward function."""
@@ -2091,7 +2006,7 @@ class GenesisAgent:
         
         # Compress weights - only send the actor layer (most important for behavior)
         with torch.no_grad():
-            for key in ['actor.weight', 'actor.bias', 'rssm_cell.weight_ih', 'comm_out.weight']:
+            for key in ['actor.weight', 'actor.bias', 'gru.weight_ih_l0', 'comm_out.weight']:
                 if key in self.brain.state_dict():
                     death_packet['weights'][key] = self.brain.state_dict()[key].detach().clone()
         
@@ -2202,7 +2117,7 @@ class GenesisAgent:
             self.transfer_domains[source_task] = {
                 k: v.detach().clone() 
                 for k, v in self.brain.state_dict().items()
-                if 'actor' in k or 'rssm_cell' in k
+                if 'actor' in k or 'gru' in k
             }
         
         if target_task in self.transfer_domains:
@@ -2311,8 +2226,6 @@ class GenesisAgent:
         if hasattr(self, 'role_history'):
             self.role_history.append(self.role)
             if len(self.role_history) > 100: self.role_history.pop(0)
-
-
 
 
 
