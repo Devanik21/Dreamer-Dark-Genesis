@@ -807,6 +807,8 @@ class GenesisAgent:
              self.prediction_errors.append(predictor_loss.item())
              if len(self.prediction_errors) > 50: self.prediction_errors.pop(0)
              recent_error = np.mean(self.prediction_errors)
+             if not np.isfinite(recent_error):
+                 recent_error = 1.0
              self.confidence = 1.0 / (1.0 + recent_error)
              
              # 5.1 Meta-Learning (Hypergradient)
@@ -899,6 +901,8 @@ class GenesisAgent:
                      param_norm = p.grad.data.norm(2)
                      total_norm += param_norm.item() ** 2
              self.last_grad_norm = total_norm ** 0.5
+             if not np.isfinite(self.last_grad_norm):
+                 self.last_grad_norm = 0.0
              
              # Track backprop depth
              loss_val = total_loss.item()
@@ -911,6 +915,8 @@ class GenesisAgent:
              
         # 5.1 Meta-Learning: Adjust meta_lr based on gradient norm
         self.meta_lr = 0.005 * (1.0 + 0.1 * np.tanh(self.last_grad_norm))
+        if not np.isfinite(self.meta_lr):
+            self.meta_lr = 0.005
         
         self.optimizer.step()
         
@@ -1080,6 +1086,13 @@ class GenesisAgent:
                 discovery = f"{channels[max_idx]}->Energy"
                 self.research_log.append(discovery)
                 if len(self.research_log) > 5: self.research_log.pop(0)
+                # 9.1 Pattern Discovery: log as a discovered pattern
+                if discovery not in self.discovered_patterns:
+                    self.discovered_patterns.append(discovery)
+                    if len(self.discovered_patterns) > 50: self.discovered_patterns.pop(0)
+                # 9.0 Record physics experiment
+                self.physics_experiments.append((max_idx, discovery))
+                if len(self.physics_experiments) > 100: self.physics_experiments.pop(0)
         except Exception:
             pass # Gradient issues can happen if decoupled
 
