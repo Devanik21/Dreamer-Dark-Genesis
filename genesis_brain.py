@@ -1086,13 +1086,6 @@ class GenesisAgent:
                 discovery = f"{channels[max_idx]}->Energy"
                 self.research_log.append(discovery)
                 if len(self.research_log) > 5: self.research_log.pop(0)
-                # 9.1 Pattern Discovery: log as a discovered pattern
-                if discovery not in self.discovered_patterns:
-                    self.discovered_patterns.append(discovery)
-                    if len(self.discovered_patterns) > 50: self.discovered_patterns.pop(0)
-                # 9.0 Record physics experiment
-                self.physics_experiments.append((max_idx, discovery))
-                if len(self.physics_experiments) > 100: self.physics_experiments.pop(0)
         except Exception:
             pass # Gradient issues can happen if decoupled
 

@@ -590,14 +590,6 @@ class GenesisWorld:
                         if agent.energy > bond_cost:
                             agent.energy -= bond_cost
                             self.bonds.add(frozenset([agent.id, other_id]))
-                            # 7.0 Neural Bridge: bonded agents share hidden state linkage
-                            agent.neural_bridge_partners.add(other_id)
-                            other.neural_bridge_partners.add(agent.id)
-                            # 7.7 Distributed Memory: store fragment from partner
-                            mem_id = f"mem_{other_id[:4]}_{self.time_step}"
-                            if len(agent.distributed_memory_fragments) < 20:
-                                agent.distributed_memory_fragments[mem_id] = other_id
-
         elif adhesion < 0.2:
             to_remove = [b for b in self.bonds if agent.id in b]
             for b in to_remove:
@@ -1379,16 +1371,16 @@ class GenesisWorld:
     def verify_global_omega(self):
         """10.10 Global Omega Point verification."""
         criteria = {
-            'multiple_conscious': self.consciousness_count >= 1,   # was 3
-            'high_sync': self.kuramoto_order_parameter > 0.3,       # was 0.7
-            'physics_mastery': self.collective_oracle_model_accuracy > 0.5,  # was 0.9
-            'nested_simulations': self.nested_simulation_depth_max >= 1,     # was 2
-            'scratchpad_active': self.global_scratchpad_activity > 10,        # was 100
-            'hive_mind': self.hive_phi > 1.0                                  # was 5.0
+            'multiple_conscious': self.consciousness_count >= 3,
+            'high_sync': self.kuramoto_order_parameter > 0.7,
+            'physics_mastery': self.collective_oracle_model_accuracy > 0.9,
+            'nested_simulations': self.nested_simulation_depth_max >= 2,
+            'scratchpad_active': self.global_scratchpad_activity > 100,
+            'hive_mind': self.hive_phi > 5.0
         }
         
         score = sum(criteria.values()) / len(criteria)
-        self.omega_achieved = score >= 0.5  # was 0.8 — show progress sooner
+        self.omega_achieved = score >= 0.8
         
         return {
             'achieved': self.omega_achieved,
@@ -1482,13 +1474,13 @@ class GenesisWorld:
             oldest = min(self.tradition_tracker.keys())
             del self.tradition_tracker[oldest]
         
-        # Check autocorrelation at lag=2 (Reduced for fast feedback by step 100)
+        # Check autocorrelation at lag=5 (Reduced from 10 for faster feedback)
         gen_keys = sorted(self.tradition_tracker.keys())
-        if len(gen_keys) < 2:
+        if len(gen_keys) < 5:
             return False
         
         behaviors_now = self.tradition_tracker.get(gen_keys[-1], [])
-        behaviors_lag = self.tradition_tracker.get(gen_keys[-2], [])  # lag=1 gen for fast turnaround
+        behaviors_lag = self.tradition_tracker.get(gen_keys[-5], [])
         
         if not behaviors_now or not behaviors_lag:
             return False
@@ -1503,8 +1495,8 @@ class GenesisWorld:
             if np.std(avg_now) > 1e-9 and np.std(avg_lag) > 1e-9:
                 correlation = np.corrcoef(avg_now, avg_lag)[0, 1]
             else:
-                correlation = 1.0  # perfectly stable = perfect tradition
-            self.tradition_persistence_verified = correlation > 0.3  # was 0.7
+                correlation = 0.0
+            self.tradition_persistence_verified = correlation > 0.7
             return self.tradition_persistence_verified
         except:
             return False
@@ -1563,8 +1555,7 @@ class GenesisWorld:
         discoveries = sum(1 for e in self.invention_history if e['type'] == 'discovery')
         losses = sum(1 for e in self.invention_history if e['type'] == 'loss')
         
-        # Cultural ratchet: discoveries outnumber losses OR we have any inventions
-        self.cultural_ratchet_verified = discoveries >= losses or current_inventions > 5
+        self.cultural_ratchet_verified = discoveries > losses
         return self.cultural_ratchet_verified
     
     def _update_leadership(self):
@@ -1619,7 +1610,7 @@ class GenesisWorld:
         else:
             self.structure_energy_ratio = 0.0
         
-        self.type_ii_verified = self.structure_energy_ratio > 0.1  # was 0.4 — achievable early
+        self.type_ii_verified = self.structure_energy_ratio > 0.4
         return self.type_ii_verified
     
     def verify_symbol_grounding(self):
@@ -1655,9 +1646,8 @@ class GenesisWorld:
                     if not np.isnan(corr):
                         correlations.append(corr ** 2)
             
-            # Progress-based: lower threshold so it reads non-zero early
-            self.symbol_grounding_r2 = max(self.symbol_grounding_r2, np.mean(correlations) if correlations else 0.0)
-            self.symbol_grounding_verified = self.symbol_grounding_r2 > 0.1  # was 0.7
+            self.symbol_grounding_r2 = np.mean(correlations) if correlations else 0.0
+            self.symbol_grounding_verified = self.symbol_grounding_r2 > 0.7
             return self.symbol_grounding_verified
         except:
             return False
