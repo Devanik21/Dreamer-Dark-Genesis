@@ -1276,7 +1276,8 @@ class GenesisAgent:
         if partner is None or not hasattr(partner, 'protocol_version'):
             return 0.0
         
-        compatibility = 1.0 - np.mean(np.abs(self.protocol_version - partner.protocol_version))
+        p_diff = np.abs(self.protocol_version - partner.protocol_version)
+        compatibility = 1.0 - np.mean(p_diff) if p_diff.size > 0 else 1.0
         
         # Evolve towards compatibility
         self.protocol_version = self.protocol_version * 0.9 + partner.protocol_version * 0.1
@@ -1535,8 +1536,11 @@ class GenesisAgent:
         phi = self.compute_phi()
         
         if len(self.phi_history) > 10:
-            recent_phi = np.mean(self.phi_history[-10:])
-            older_phi = np.mean(self.phi_history[-50:-40]) if len(self.phi_history) > 50 else 0.1
+            recent_phi = np.mean(self.phi_history[-10:]) if len(self.phi_history) >= 10 else 0.1
+            older_phi = np.mean(self.phi_history[-50:-40]) if len(self.phi_history) >= 50 else 0.1
+        else:
+            recent_phi = 0.1
+            older_phi = 0.1
             
             phase_transition = recent_phi > older_phi * 5
             threshold_exceeded = phi > self.phi_critical
@@ -1588,10 +1592,13 @@ class GenesisAgent:
         # Trend detection
         recent = outcomes[-10:]
         older = outcomes[-20:-10]
-        if np.mean(recent) > np.mean(older) * 1.2:
-            patterns.append("upward_trend")
-        elif np.mean(recent) < np.mean(older) * 0.8:
-            patterns.append("downward_trend")
+        m_recent = np.mean(recent) if len(recent) > 0 else 0
+        m_older = np.mean(older) if len(older) > 0 else 0
+        
+        if m_recent > m_older * 1.2:
+            self.learning_rate = min(0.01, self.learning_rate * 1.05)
+        elif m_recent < m_older * 0.8:
+            self.learning_rate = max(0.001, self.learning_rate * 0.95)
         
         self.discovered_patterns = list(set(self.discovered_patterns + patterns))
         return patterns
@@ -1641,7 +1648,8 @@ class GenesisAgent:
                 outcomes.append(e['outcome'])
         
         if outcomes:
-            mean_outcome = np.mean(outcomes)
+        if outcomes:
+            mean_outcome = np.mean(outcomes) if len(outcomes) > 0 else 0.0
             std_outcome = np.std(outcomes) + 1e-8
             
             # Infer that Oracle rewards certain patterns
@@ -1757,7 +1765,7 @@ class GenesisAgent:
             len(self.discovered_exploits) / 10.0,
             self.simulation_awareness
         ]
-        self.physics_mastery_score = np.clip(np.mean(components), 0, 1)
+        self.physics_mastery_score = np.clip(np.mean(components), 0, 1) if len(components) > 0 else 0.0
         return self.physics_mastery_score
 
     # ============================================================

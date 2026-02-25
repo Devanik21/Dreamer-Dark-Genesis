@@ -475,6 +475,8 @@ class GenesisWorld:
                     gradients.append(0.0)
         if not gradients:
             return torch.zeros(1)
+        if not gradients:
+            return torch.zeros(1)
         return torch.tensor([np.mean(gradients)], dtype=torch.float32)
 
     def update_pheromones(self):
@@ -887,7 +889,8 @@ class GenesisWorld:
         
         if not self.agents: return
         
-        avg_trade = np.mean([a.last_value.item() for a in self.agents.values() if a.last_value is not None])
+        trades = [a.last_value.item() for a in self.agents.values() if a.last_value is not None]
+        avg_trade = np.mean(trades) if trades else 0.0
         # Use simple heuristics
         
         eff_vote = 0.0
@@ -1148,8 +1151,11 @@ class GenesisWorld:
         phases = [a.kuramoto_phase for a in self.agents.values() 
                   if hasattr(a, 'kuramoto_phase')]
         if phases:
-            complex_order = np.mean([np.exp(1j * p) for p in phases])
+        if phases:
+            complex_order = np.mean([np.exp(1j * p) for p in phases]) if phases else 0.0
             self.kuramoto_order_parameter = abs(complex_order)
+        else:
+            self.kuramoto_order_parameter = 0.0
     
     def federated_gradient_step(self):
         """7.2 Gradient Sharing: Pool and average gradients."""
@@ -1237,10 +1243,11 @@ class GenesisWorld:
         similarities = []
         for i in range(len(protocols)):
             for j in range(i+1, len(protocols)):
-                sim = 1.0 - np.mean(np.abs(protocols[i] - protocols[j]))
+                p_diff = np.abs(protocols[i] - protocols[j])
+                sim = 1.0 - np.mean(p_diff) if p_diff.size > 0 else 1.0
                 similarities.append(sim)
         
-            self.protocol_convergence = np.mean(similarities) if similarities else 0.0
+            self.protocol_convergence = np.mean(similarities) if len(similarities) > 0 else 0.0
         
         # 7.6 Consensus Mechanism: If convergence > 0.3, start a new proposal occasionally (Staggered)
         if self.protocol_convergence > 0.3 and self.time_step % 25 == 4:
@@ -1509,12 +1516,9 @@ class GenesisWorld:
         behaviors_now = self.tradition_tracker.get(gen_keys[-1], [])
         behaviors_lag = self.tradition_tracker.get(gen_keys[-5], [])
         
-        if not behaviors_now or not behaviors_lag:
-            return False
-        
-        try:
-            avg_now = np.mean(behaviors_now, axis=0)
-            avg_lag = np.mean(behaviors_lag, axis=0)
+        if len(behaviors_now) > 0 and len(behaviors_lag) > 0:
+            avg_now = np.mean(behaviors_now, axis=0) if len(behaviors_now) > 0 else np.zeros(3)
+            avg_lag = np.mean(behaviors_lag, axis=0) if len(behaviors_lag) > 0 else np.zeros(3)
             
             if len(avg_now) != len(avg_lag):
                 return False
@@ -1525,7 +1529,7 @@ class GenesisWorld:
                 correlation = 0.0
             self.tradition_persistence_verified = correlation > 0.7
             return self.tradition_persistence_verified
-        except:
+        else: # Added else block to handle cases where behaviors_now or behaviors_lag are empty
             return False
     
     def measure_cultural_drift(self):
@@ -1547,13 +1551,13 @@ class GenesisWorld:
         for i in range(4):
             for j in range(i+1, 4):
                 if quadrants[i] and quadrants[j]:
-                    mean_i = np.mean(quadrants[i], axis=0)
-                    mean_j = np.mean(quadrants[j], axis=0)
+                    mean_i = np.mean(quadrants[i], axis=0) if len(quadrants[i]) > 0 else np.zeros(3)
+                    mean_j = np.mean(quadrants[j], axis=0) if len(quadrants[j]) > 0 else np.zeros(3)
                     # Symmetric KL approximation
                     kl = np.sum(np.abs(mean_i - mean_j))
                     divergences.append(kl)
         
-        self.cultural_divergence = np.mean(divergences) if divergences else 0.0
+        self.cultural_divergence = np.mean(divergences) if len(divergences) > 0 else 0.0
         return self.cultural_divergence
     
     def verify_cultural_ratchet(self):
