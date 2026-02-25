@@ -137,6 +137,9 @@ class GenesisBrain(nn.Module):
                 nn.init.orthogonal_(m.weight, gain=1.0)
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0.0)
+        
+        # 1.8 Compatibility: Mock Actor Mask for frontend metrics
+        self.actor_mask = type('MockMask', (), {'sparsity': lambda: torch.tensor([0.0])})()
 
     def forward(self, x, hidden):
         # Ensure hidden state is correct shape (B, 128) for GRUCell
@@ -741,6 +744,10 @@ class GenesisAgent:
         else:
             self.dialect_id = 0
 
+        # 8.9 Record Qualia (Level 8 Metric)
+        if self.age % 15 == 0:
+            self.record_qualia("sensory_state", vector)
+
         # 7.7 Distributed Memory (Rare social event)
         if social_trust > 0.8 and random.random() < 0.05:
             # Store a "memory" (current sensory state) in the hive
@@ -928,7 +935,19 @@ class GenesisAgent:
         # 5.10 Autonomous Research (Sensitivity Analysis)
         if random.random() < 0.01:
             self.conduct_experiment()
+            
+        # 9.1 Discovery Loop (Level 9 Metric)
+        if self.age % 20 == 0:
+            self.detect_patterns()
         
+        # 7.8 Fault Tolerance (Level 7 Metric)
+        # Occasionally establish 'silent' backup connections with high-trust IDs
+        if social_trust > 0.9 and random.random() < 0.05:
+            # We don't have neighbor list in metabolize, but we have social_memory
+            trusted_ids = [id for id, mem in self.social_memory.items() if mem.get('trust', 0) > 0.7]
+            if trusted_ids:
+                self.add_backup_connection(random.choice(trusted_ids))
+
         self.thoughts_had += 1
 
         # 1.5 Homeostasis check
