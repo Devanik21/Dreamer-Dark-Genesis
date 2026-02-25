@@ -1440,7 +1440,6 @@ with tab_hive:
             
             st.markdown("### ⏱️ Role Stability (4.1)")
             stability_scores = [sum(1 for i in range(1, len(a.role_history)) if a.role_history[i] == a.role_history[i-1]) / max(1, len(a.role_history)) for a in agents_l4 if len(a.role_history) > 5]
-            stability_scores = [sum(1 for i in range(1, len(a.role_history)) if a.role_history[i] == a.role_history[i-1]) / max(1, len(a.role_history)) for a in agents_l4 if len(a.role_history) > 5]
             if stability_scores:
                 avg_stability = np.mean(stability_scores)
                 st.metric("Mean Role Persistence", f"{avg_stability*100:.1f}%")

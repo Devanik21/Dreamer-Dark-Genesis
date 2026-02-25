@@ -1648,8 +1648,7 @@ class GenesisAgent:
                 outcomes.append(e['outcome'])
         
         if outcomes:
-        if outcomes:
-            mean_outcome = np.mean(outcomes) if len(outcomes) > 0 else 0.0
+            mean_outcome = np.mean(outcomes)
             std_outcome = np.std(outcomes) + 1e-8
             
             # Infer that Oracle rewards certain patterns

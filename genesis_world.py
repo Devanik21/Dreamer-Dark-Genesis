@@ -475,8 +475,6 @@ class GenesisWorld:
                     gradients.append(0.0)
         if not gradients:
             return torch.zeros(1)
-        if not gradients:
-            return torch.zeros(1)
         return torch.tensor([np.mean(gradients)], dtype=torch.float32)
 
     def update_pheromones(self):
@@ -1151,8 +1149,7 @@ class GenesisWorld:
         phases = [a.kuramoto_phase for a in self.agents.values() 
                   if hasattr(a, 'kuramoto_phase')]
         if phases:
-        if phases:
-            complex_order = np.mean([np.exp(1j * p) for p in phases]) if phases else 0.0
+            complex_order = np.mean([np.exp(1j * p) for p in phases])
             self.kuramoto_order_parameter = abs(complex_order)
         else:
             self.kuramoto_order_parameter = 0.0
