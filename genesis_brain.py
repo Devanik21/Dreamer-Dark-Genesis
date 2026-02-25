@@ -62,13 +62,14 @@ class PruningMask(nn.Module):
 
 class GenesisBrain(nn.Module):
     """
-    V-DV4 Dreamer Architecture (2026 SOTA) for 256 Super-Agents.
+    V-DV4 Dreamer Architecture (2026 SOTA) for 96 Super-Agents.
     """
     def __init__(self, input_dim=41, hidden_dim=256, output_dim=21):
         super().__init__()
         self.hidden_dim = hidden_dim
         
         # 1. Encoder (Sensory Processing)
+        # Compresses 41D input -> 256D Latent State
         self.encoder = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
@@ -76,9 +77,11 @@ class GenesisBrain(nn.Module):
         )
         
         # 2. RSSM (Recurrent State-Space Model) - The Dream Engine
+        # Deterministic state (h) + Stochastic state (z)
         self.rssm_cell = nn.GRUCell(hidden_dim, hidden_dim)
         
         # 3. Transformer Actor (Attention-based Policy)
+        # Tiny Transformer Block for attention-based decision-making
         self.actor_attention = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=4, batch_first=True)
         self.actor = nn.Linear(hidden_dim, output_dim)
         
@@ -209,7 +212,7 @@ class GenesisAgent:
         
         # LEVEL 5 STATE MEMORY
         # 5.0 Self-Monitoring
-        self.prediction_errors = []  # Capped at 50
+        self.prediction_errors = []
         self.confidence = 0.5 
         
         # 5.1 Meta-Learning (Hypergradients)
@@ -223,14 +226,15 @@ class GenesisAgent:
         self.research_log = []
         
         # 3.2 Horizontal Neural Transfer (Viral Memory)
-        self.meme_pool = [] # Capped at 3
+        self.meme_pool = [] # List of {weights: StateDict, fitness: float, beta: float, type: 'virus'}
 
         # ============================================================
         # 🌍 LEVEL 6: GEO-ENGINEERING STATE
         # ============================================================
         # 6.0 Environmental Prediction
-        self.env_history = []  # [(x, y, signal, tick)] history buffer (capped at 30)
+        self.env_history = []  # [(x, y, signal, tick)] history buffer
         self.env_prediction_accuracy = 0.0
+        self.env_predictor_hidden = torch.zeros(1, 1, 32)
         
         # 6.1 Probabilistic Environment Collapse (Bayesian Niche Construction)
         self.env_beliefs = {}  # {(x,y): np.array([P(food), P(poison), P(empty)])}
@@ -350,7 +354,7 @@ class GenesisAgent:
         # ⚛️ LEVEL 9: UNIVERSAL HARMONIC RESONANCE STATE
         # ============================================================
         # 9.0 Physics Probing
-        self.physics_experiments = []  # Capped at 50
+        self.physics_experiments = []  # [(state, action, outcome)]
         self.state_space_coverage = 0.0
         
         # 9.1 Pattern Discovery
@@ -402,7 +406,7 @@ class GenesisAgent:
         self.internal_dim_used = 0  # Intrinsic dimensionality of representations
         
         # 10.2 Simulation Primitives
-        self.internal_agents = []  # Capped at 2 (memory-limited)
+        self.internal_agents = []  # List of {weights, state, goal}
         
         # 10.3 Nested Dynamics
         self.internal_simulation_steps = 0
@@ -452,10 +456,6 @@ class GenesisAgent:
         # 9.4 Predictive Control
         self.action_sequence_cache = []  # Pre-computed optimal actions
         
-        # 1.10 Interaction Tracking
-        self.trade_count = 0
-        self.punish_count = 0
-        
         self.omega_evidence = {
             'self_sustaining': False,
             'replication': False,
@@ -466,11 +466,6 @@ class GenesisAgent:
             'substrate_independence': False
         }
         
-        # 1.10 Optimization: Staggered Updates
-        self.cached_weight_entropy = 0.0
-        self.entropy_update_tick = random.randint(0, 50)
-        self.dream_update_tick = random.randint(0, 5)
-        
         # Memory for learning
         self.last_vector = torch.zeros(1, 21)
         self.last_value = torch.zeros(1, 1)
@@ -478,25 +473,20 @@ class GenesisAgent:
         self.last_reward = 0.0
         self.last_prediction = None
         self.last_input = None
-        self.last_weight_entropy = self.calculate_weight_entropy() # Initial calc
+        self.last_weight_entropy = self.calculate_weight_entropy()
         
         # If born from parents, inherit genome
         if genome:
             self._apply_genome(genome)
 
     def calculate_weight_entropy(self):
-        """1.3 Landauer Metric: Shannon entropy of the brain's weight distribution (Cached)."""
-        # Periodic Recalculation (Every 50 ticks)
-        if self.age > 0 and (self.age + self.entropy_update_tick) % 50 != 0 and self.cached_weight_entropy > 0:
-            return self.cached_weight_entropy
-
+        """1.3 Landauer Metric: Shannon entropy of the brain's weight distribution."""
         with torch.no_grad():
             all_weights = torch.cat([p.view(-1) for p in self.brain.parameters()])
             hist = torch.histc(all_weights, bins=20, min=-2, max=2)
             prob = hist / (hist.sum() + 1e-8)
             entropy = -torch.sum(prob * torch.log2(prob + 1e-8))
-            self.cached_weight_entropy = entropy.item()
-            return self.cached_weight_entropy
+            return entropy.item()
 
     def generate_zahavi_proof(self, vector, difficulty=1):
         """
@@ -510,7 +500,7 @@ class GenesisAgent:
         vec_bytes = (vector * 100).long().cpu().numpy().tobytes()
         
         # Limit iterations to avoid freezing the simulation
-        max_iter = 20 
+        max_iter = 100 
         for _ in range(max_iter):
             candidate = f"{nonce}".encode() + vec_bytes
             h = hashlib.sha256(candidate).hexdigest()
@@ -642,8 +632,8 @@ class GenesisAgent:
             # Run a dream cycle
             self.simulate_forward(vector, steps=5)
             
-        # 8.8 Strange Loops (Optimized Frequency)
-        if self.age % 100 == 0:
+        # 8.8 Strange Loops
+        if self.age % 50 == 0:
             self.strange_loop_check()
             
         # 9.0 Physics Probing
@@ -656,7 +646,7 @@ class GenesisAgent:
             self.run_gol_step()
             
             # 10.2 Create Internal Agents (If space allows)
-            if len(self.internal_agents) < 2 and self.energy > 60.0:
+            if len(self.internal_agents) < 5 and self.energy > 60.0:
                  self.create_internal_agent(self)
             
             # 10.5 Recursive Depth (If already have internal agents)
@@ -667,8 +657,8 @@ class GenesisAgent:
             if vector[0, 15].item() > 0.7:
                 self.write_scratchpad(int(self.x)%32, int(self.y)%32, 1)
 
-        # 9.9 Simulation Awareness (Infrequent)
-        if self.age % 100 == 0:
+        # 9.9 Simulation Awareness (Rare check)
+        if self.age % 50 == 0:
             self.detect_simulation_artifacts()
 
         # 8.10 Verify Consciousness (Every tick to ensure metric updates)
@@ -731,13 +721,9 @@ class GenesisAgent:
              else:
                  recon_loss = torch.tensor(0.0)
 
-             # B. The Dream (Staggered Imagination Rollout)
-             # Dream 5 steps into the future (Horizon reduced for performance)
-             # Only dream every 5 ticks per agent, staggered by their birth offset
-             if (self.age + self.dream_update_tick) % 5 == 0:
-                 dream_states, dream_rewards = self.brain.dream(current_h, horizon=5)
-             else:
-                 return True # Skip learning this tick to save compute
+             # B. The Dream (Imagination Rollout)
+             # Dream 10 steps into the future using the RSSM
+             dream_states, dream_rewards = self.brain.dream(current_h, horizon=10)
              
              # C. Critique the Dream (Value Estimation)
              # V(s) of dreamed states
@@ -990,8 +976,8 @@ class GenesisAgent:
         return packet
 
     def receive_infection(self, packet):
-        """3.2 Receive a viral packet (Memory-Capped)."""
-        if len(self.meme_pool) < 3:
+        """3.2 Receive a viral packet."""
+        if len(self.meme_pool) < 5:
             self.meme_pool.append(packet)
 
     # ============================================================
@@ -999,9 +985,9 @@ class GenesisAgent:
     # ============================================================
     
     def record_environment(self, x, y, signal, tick):
-        """6.0 Environmental Prediction: Record observation history (Memory-Capped)."""
+        """6.0 Environmental Prediction: Record observation history."""
         self.env_history.append((x, y, signal.clone().detach(), tick))
-        if len(self.env_history) > 30:
+        if len(self.env_history) > 100:
             self.env_history.pop(0)
     
     def predict_environment(self, target_x, target_y, future_tick):
@@ -1017,10 +1003,10 @@ class GenesisAgent:
         prediction = history_tensor.mean(dim=1).squeeze(0)
         
         # Calculate accuracy from past predictions if available
-        if len(self.env_history) > 20:
+        if len(self.env_history) > 50:
             actual = self.env_history[-1][2]
-            predicted_old = torch.stack([r[2] for r in self.env_history[-20:-10]]).mean(dim=0)
-            mse = ((actual - predicted_old)**2).mean().item()
+            predicted_50_ago = torch.stack([r[2] for r in self.env_history[-60:-50]]).mean(dim=0)
+            mse = ((actual - predicted_50_ago)**2).mean().item()
             self.env_prediction_accuracy = max(0, 1.0 - mse)
         
         return prediction, self.env_prediction_accuracy
@@ -1276,8 +1262,7 @@ class GenesisAgent:
         if partner is None or not hasattr(partner, 'protocol_version'):
             return 0.0
         
-        p_diff = np.abs(self.protocol_version - partner.protocol_version)
-        compatibility = 1.0 - np.mean(p_diff) if p_diff.size > 0 else 1.0
+        compatibility = 1.0 - np.mean(np.abs(self.protocol_version - partner.protocol_version))
         
         # Evolve towards compatibility
         self.protocol_version = self.protocol_version * 0.9 + partner.protocol_version * 0.1
@@ -1461,9 +1446,9 @@ class GenesisAgent:
             return False
         
         with torch.no_grad():
-            dim = self.brain.hidden_dim  # Dynamic: 128 for cloud-optimized brain
+            dim = 256
             weight_sample = next(self.brain.parameters()).flatten()[:dim]
-            # Handle case where weights might be smaller than dim
+            # Handle case where weights might be smaller than dim (unlikely for V4 but safe)
             if len(weight_sample) < dim:
                  pad = torch.zeros(dim - len(weight_sample))
                  if weight_sample.is_cuda: pad = pad.cuda()
@@ -1481,7 +1466,7 @@ class GenesisAgent:
             else:
                  combined = weight_encoding
 
-            # Ensure combined is exactly (1, hidden_dim)
+            # Ensure combined is exactly (1, 256)
             if combined.shape[1] != dim:
                  if combined.shape[1] > dim:
                      combined = combined[:, :dim]
@@ -1536,11 +1521,8 @@ class GenesisAgent:
         phi = self.compute_phi()
         
         if len(self.phi_history) > 10:
-            recent_phi = np.mean(self.phi_history[-10:]) if len(self.phi_history) >= 10 else 0.1
-            older_phi = np.mean(self.phi_history[-50:-40]) if len(self.phi_history) >= 50 else 0.1
-        else:
-            recent_phi = 0.1
-            older_phi = 0.1
+            recent_phi = np.mean(self.phi_history[-10:])
+            older_phi = np.mean(self.phi_history[-50:-40]) if len(self.phi_history) > 50 else 0.1
             
             phase_transition = recent_phi > older_phi * 5
             threshold_exceeded = phi > self.phi_critical
@@ -1554,19 +1536,19 @@ class GenesisAgent:
     # ============================================================
     
     def probe_physics(self, state, action, outcome):
-        """9.0 Physics Probing: Systematic environment testing (Memory-Capped)."""
+        """9.0 Physics Probing: Systematic environment testing."""
         self.physics_experiments.append({
             'state': state.clone().detach() if torch.is_tensor(state) else state,
             'action': action.clone().detach() if torch.is_tensor(action) else action,
             'outcome': outcome
         })
         
-        if len(self.physics_experiments) > 50:
+        if len(self.physics_experiments) > 500:
             self.physics_experiments.pop(0)
         
         unique_states = len(set(str(e['state'].tolist()) for e in self.physics_experiments 
                                 if torch.is_tensor(e['state'])))
-        self.state_space_coverage = unique_states / 50.0
+        self.state_space_coverage = unique_states / 500.0
     
     def detect_patterns(self):
         """9.1 Pattern Discovery: Statistical pattern detection."""
@@ -1592,20 +1574,11 @@ class GenesisAgent:
         # Trend detection
         recent = outcomes[-10:]
         older = outcomes[-20:-10]
-        m_recent = np.mean(recent) if len(recent) > 0 else 0
-        m_older = np.mean(older) if len(older) > 0 else 0
-        
-        if m_recent > m_older * 1.2:
+        if np.mean(recent) > np.mean(older) * 1.2:
             patterns.append("upward_trend")
-            self.meta_lr = min(0.01, self.meta_lr * 1.05)
-        elif m_recent < m_older * 0.8:
+        elif np.mean(recent) < np.mean(older) * 0.8:
             patterns.append("downward_trend")
-            self.meta_lr = max(0.001, self.meta_lr * 0.95)
         
-        # Apply to optimizer
-        for param_group in self.optimizer.param_groups:
-            param_group['lr'] = self.meta_lr
-            
         self.discovered_patterns = list(set(self.discovered_patterns + patterns))
         return patterns
     
@@ -1707,9 +1680,9 @@ class GenesisAgent:
         return len(self.discovered_glitches) > 0
     
     def do_calculus_intervention(self, action_idx, observed_result):
-        """9.8 Pearl's Causal Calculus: P(R|do(A)) via intervention (Memory-Capped)."""
+        """9.8 Pearl's Causal Calculus: P(R|do(A)) via intervention."""
         self.intervention_history.append((action_idx, observed_result))
-        if len(self.intervention_history) > 50:
+        if len(self.intervention_history) > 200:
             self.intervention_history.pop(0)
         
         # Build causal graph from interventions
@@ -1770,7 +1743,7 @@ class GenesisAgent:
             len(self.discovered_exploits) / 10.0,
             self.simulation_awareness
         ]
-        self.physics_mastery_score = np.clip(np.mean(components), 0, 1) if len(components) > 0 else 0.0
+        self.physics_mastery_score = np.clip(np.mean(components), 0, 1)
         return self.physics_mastery_score
 
     # ============================================================

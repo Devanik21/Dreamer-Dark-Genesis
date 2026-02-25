@@ -12,9 +12,8 @@ GRID_SIZE = 40
 SIGNAL_DIM = 16
 MAX_ENERGY = 100000.0 # Effectively Infinite (Type II Civilization Potential)
 # "Easy mode" - metabolic cost is low, but stupidity kills
-METABOLIC_COST = 0.01 
-SUMMER_LENGTH = 50
-WINTER_LENGTH = 15
+METABOLIC_COST = 0.08 
+SEASON_LENGTH = 20 # Shortened winter (Nobel Optimization)
 
 # ============================================================
 # 🔮 THE PHYSICS ORACLE (The Laws of Nature)
@@ -46,8 +45,8 @@ class PhysicsOracle(nn.Module):
         # Bias the "Energy" output (Index 0) SLIGHTLY positive
         # Was 0.5 (Too safe). Now 0.1 (Survival requires finding the peaks)
         with torch.no_grad():
-            self.layers[-1].bias[0] = 0.4 # Boosted from 0.0 for "Easy Mode"
-            self.layers[-1].bias[4] = -0.2 # Reduced drain on interaction
+            self.layers[-1].bias[0] = 0.0 
+            self.layers[-1].bias[4] = -0.3 # Harsher drain on interaction
             
     def forward(self, vector_21, matter_signal_16):
         x = torch.cat([vector_21, matter_signal_16], dim=1)
@@ -79,7 +78,7 @@ class Resource(Entity):
     def get_nutrition(self, current_season):
         # Summer (Even) favors Red/Green
         # Winter (Odd) favors Blue
-        base = 50.0 # Boosted from 30.0 for easier thermodynamics
+        base = 30.0
         
         is_summer = (current_season % 2 == 0)
         
@@ -190,12 +189,10 @@ class Battery(Structure):
     
     def deposit(self, agent, amount):
         """Store energy in battery."""
-        if amount <= 0: return 0.0
-        
-        # Calculate space left
-        space = max(0.0, self.capacity - self.stored_energy)
-        actual = min(amount, space)
-            
+        if self.stored_energy + amount > self.capacity:
+            actual = self.capacity - self.stored_energy
+        else:
+            actual = amount
         if agent.energy >= actual:
             agent.energy -= actual
             self.stored_energy += actual * 0.9  # 10% loss
@@ -305,7 +302,6 @@ class GenesisWorld:
         self.size = size
         self.grid = {} 
         self.agents = {} 
-        self.agent_grid = {} # 🔧 OPTIMIZATION: (x,y) -> [agent_id]
         self.time_step = 0
         self.current_season = 0
         self.season_timer = 0
@@ -321,10 +317,9 @@ class GenesisWorld:
         self.bonds = set() # Set of tuples (frozenset of agent IDs)
         
         # 1.4 Scarcity Scaling
-        self.scarcity_lambda = 0.001
+        self.scarcity_lambda = 0.01
         self.discovered_physics_exploits = [] # 9.2 Collective Exploit Tracking
-        self.base_spawn_rate = 35.0 # GOLDEN ERA: Increased from 15 to 25
-        self.code_mutations = 0 # 1.10 AUDIT FIX: Track total mutations
+        self.base_spawn_rate = 15 # GOLDEN ERA: Increased from 10 to 15
         
         # 1.10 Entropy Tracking
         self.system_entropy = 0.0
@@ -425,14 +420,14 @@ class GenesisWorld:
         # Only run occasionally to save compute
         if self.time_step % 10 != 0: return
 
-        for agent in list(self.agents.values()):
+        for agent in self.agents.values():
             if agent.confidence < 0.3: # Confused/Forgetting
                  # Find a confident neighbor (Mentor)
                  best_mentor = None
                  max_conf = 0.5
                  
                  neighbors = [
-                     self.agents[oid] for oid in list(self.agents.keys()) 
+                     self.agents[oid] for oid in self.agents 
                      if oid != agent.id and abs(self.agents[oid].x - agent.x) <= 2 and abs(self.agents[oid].y - agent.y) <= 2
                  ]
                  
@@ -473,8 +468,6 @@ class GenesisWorld:
                     gradients.append(self.grid[(nx, ny)].get_nutrition(self.current_season))
                 else:
                     gradients.append(0.0)
-        if not gradients:
-            return torch.zeros(1)
         return torch.tensor([np.mean(gradients)], dtype=torch.float32)
 
     def update_pheromones(self):
@@ -568,22 +561,19 @@ class GenesisWorld:
              displacement_flag = emit_vector[15].item()
              if displacement_flag > 0.5:
                  # Map 0-1 to -5 to +5 offset
-                 raw_dx = (emit_vector[13].item() - 0.5) * 10
-                 raw_dy = (emit_vector[14].item() - 0.5) * 10
-                 if np.isfinite(raw_dx) and np.isfinite(raw_dy):
-                     dx = int(raw_dx)
-                     dy = int(raw_dy)
-                     target_x = (agent.x + dx) % self.size
-                     target_y = (agent.y + dy) % self.size
-                     # Higher cost for projection
-                     agent.energy -= 0.5
+                 dx = int((emit_vector[13].item() - 0.5) * 10)
+                 dy = int((emit_vector[14].item() - 0.5) * 10)
+                 target_x = (agent.x + dx) % self.size
+                 target_y = (agent.y + dy) % self.size
+                 # Higher cost for projection
+                 agent.energy -= 0.5
              
              self.pheromone_grid[target_x, target_y] += emit_vector.detach().numpy()
              np.clip(self.pheromone_grid[target_x, target_y], 0, 1.0, out=self.pheromone_grid[target_x, target_y])
 
         # 2. 2.4 Coalition & 2.5 Resource Sharing: BOND LOGIC
         if adhesion > 0.5:
-            for other_id, other in list(self.agents.items()):
+            for other_id, other in self.agents.items():
                 if other_id != agent.id:
                     dist = math.sqrt((agent.x - other.x)**2 + (agent.y - other.y)**2)
                     if dist < 1.5:
@@ -603,7 +593,7 @@ class GenesisWorld:
         outcome_log = "✨ IDLE"
         if punish > 0.7:
              # Find a neighbor to punish
-             for other_id, other in list(self.agents.items()):
+             for other_id, other in self.agents.items():
                 if other_id != agent.id:
                     dist = math.sqrt((agent.x - other.x)**2 + (agent.y - other.y)**2)
                     if dist < 1.5:
@@ -613,8 +603,6 @@ class GenesisWorld:
                             agent.energy -= cost
                             other.energy -= damage
                             other.social_memory[agent.id] = other.social_memory.get(agent.id, 0) - 1.0 # Trust loss
-                            # 1.10 AUDIT FIX: Track Punish Count
-                            if hasattr(agent, 'punish_count'): agent.punish_count += 1
                             outcome_log = f"⚔️ PUNISHED {other_id[:4]}"
                             break
 
@@ -635,8 +623,6 @@ class GenesisWorld:
                                     partner.inventory[j] -= 1
                                     partner.inventory[i] += 1
                                     agent.social_memory[other_id] = agent.social_memory.get(other_id, 0) + 0.5 # Trust gain
-                                    # 1.10 AUDIT FIX: Track Trade Count
-                                    if hasattr(agent, 'trade_count'): agent.trade_count += 1
                                     outcome_log = f"🤝 TRADED with {other_id[:4]}"
                                     break
 
@@ -696,29 +682,20 @@ class GenesisWorld:
                     try:
                         idx = int(res.type)
                         agent.inventory[idx] += 1
-                        
-                        # metabolic boost from resource nutrition (Winter survival fix)
-                        boost = res.get_nutrition(self.current_season)
-                        agent.energy += boost
-                        
                         # Synergy Bonus: Complete set (R,G,B) gives +30 Energy
                         if all(count > 0 for count in agent.inventory):
                             agent.energy += 30.0
                             for i in range(3): agent.inventory[i] -= 1
                             outcome_log = "🌟 SYNERGY BONUS!"
                         else:
-                            outcome_log = f"😋 CONSUMED {['Red','Green','Blue'][idx]} (+{boost:.0f}E)"
-                    except (ValueError, TypeError, AttributeError):
+                            outcome_log = f"😋 CONSUMED {['Red','Green','Blue'][idx]}"
+                    except (ValueError, TypeError):
                         # This handles 'mega_resource' or any other non-standard entity
-                        boost = res.get_nutrition(self.current_season) if hasattr(res, 'get_nutrition') else 150.0
-                        agent.energy += boost
-                        outcome_log = f"💎 MEGA-RESOURCE HARVESTED! (+{boost:.0f}E)"
+                        agent.energy += 150.0 
+                        outcome_log = "💎 MEGA-RESOURCE HARVESTED!"
                     
                     del self.grid[loc]
             else: outcome_log = "🔥 NEGATIVE FLUX (-)"
-            
-            # --- Energy Floor (Prevent Unphysical Negatives) ---
-            if agent.energy < -100.0: agent.energy = -100.0
         
         return energy_flux, outcome_log
 
@@ -728,11 +705,10 @@ class GenesisWorld:
         
         # 1.4 Scarcity: Exponential decay of spawn rate
         # Nobel-Level Fix: floor at 0.7 (Always 70% abundance) to prevent extinction
-        current_spawn_prob = max(0.8, np.exp(-self.scarcity_lambda * self.time_step))
+        current_spawn_prob = max(0.7, np.exp(-self.scarcity_lambda * self.time_step))
         
         # 1.6 Circadian Rhythms: Environment Phase
-        current_len = SUMMER_LENGTH if self.current_season % 2 == 0 else WINTER_LENGTH
-        self.env_phase = (self.season_timer / current_len) * 2 * np.pi
+        self.env_phase = (self.time_step / SEASON_LENGTH) * 2 * np.pi
         
         # Phase 13: Biology Update
         self.update_pheromones()
@@ -741,7 +717,7 @@ class GenesisWorld:
         # If population crashes, everyone becomes a Queen to save the species.
         n_pop = len(self.agents)
         if n_pop < 50:
-            for agent in list(self.agents.values()):
+            for agent in self.agents.values():
                 agent.is_fertile = True
         
         # Nobel Adaptive Spawning: Smooth Continuous Scaling
@@ -761,9 +737,7 @@ class GenesisWorld:
         # 4.9 Collective Memory: Retrieve lost knowledge
         self.collective_memory_retrieval()
         
-        # Staggered: only recalculate every 10 ticks for performance
-        if self.time_step % 10 == 0:
-            self._update_entropy_metrics()
+        self._update_entropy_metrics()
         
         # 5.6 Collective Optimization
         if self.time_step % 100 == 0:
@@ -779,7 +753,7 @@ class GenesisWorld:
                     packet = agent.create_weight_packet()
                     # Broadcast to neighbors
                     neighbors = [
-                        a for a in list(self.agents.values()) 
+                        a for a in self.agents.values() 
                         if a.id != agent.id and abs(a.x - agent.x) <= 2 and abs(a.y - agent.y) <= 2
                     ]
                     for n in neighbors:
@@ -793,26 +767,12 @@ class GenesisWorld:
                                 "Vector": [0]*21
                             })
         
-        # 🗓️ DYNAMIC SEASONAL CYCLES (Summer 50, Winter 15)
-        current_max = SUMMER_LENGTH if self.current_season % 2 == 0 else WINTER_LENGTH
-        if self.season_timer >= current_max:
+        if self.season_timer >= SEASON_LENGTH:
             self.current_season += 1
-            # Seasonal boost - Summer is rich, Winter is managed but easier now
-            resources_to_spawn = 40 if self.current_season % 2 == 0 else 20
-            for _ in range(resources_to_spawn): 
-                self.spawn_resource()
-            
-            # ❄️ WINTER SURVIVAL FIX: Force-spawn Blue resources in winter
-            if self.current_season % 2 == 1:
-                for _ in range(15): # Increased from 10
-                    x, y = random.randint(0, self.size-1), random.randint(0, self.size-1)
-                    if (x, y) not in self.grid:
-                        res = Resource(x, y)
-                        res.type = 2 # Force Blue
-                        res.signal = torch.zeros(SIGNAL_DIM)
-                        res.signal[8:12] = 0.8
-                        self.grid[(x, y)] = res
             self.season_timer = 0
+            # 1.4 Scarcity applied to seasonal spawn
+            for _ in range(int(20 * current_spawn_prob)): 
+                self.spawn_resource()
         
         if self.time_step % 2 == 0:
             for _ in range(5): self.spawn_resource()
@@ -821,17 +781,15 @@ class GenesisWorld:
         if self.time_step % 100 == 0:
             mx, my = random.randint(0, self.size-1), random.randint(0, self.size-1)
             self.grid[(mx, my)] = MegaResource(mx, my)
-        
-        # 🔧 AUDIT FIX: Run Level 6-10 Logic
-        self.level_6_10_step()
-
 
     def _update_entropy_metrics(self):
         """1.10 Complete Entropy Defiance: Track system-wide entropy changes."""
         # 1. Agent Weight Entropy (Neural Compression)
         if self.agents:
-            weights = [a.calculate_weight_entropy() for a in list(self.agents.values())]
-            self.agent_entropy = np.mean(weights) if weights else 0.0
+            weights = []
+            for a in list(self.agents.values()):
+                weights.append(a.calculate_weight_entropy())
+            self.agent_entropy = np.mean(weights)
         
         # 2. Environmental Entropy (Resource Distribution)
         # Using a simple grid occupancy entropy
@@ -887,8 +845,7 @@ class GenesisWorld:
         
         if not self.agents: return
         
-        trades = [a.last_value.item() for a in self.agents.values() if a.last_value is not None]
-        avg_trade = np.mean(trades) if trades else 0.0
+        avg_trade = np.mean([a.last_value.item() for a in self.agents.values() if a.last_value is not None])
         # Use simple heuristics
         
         eff_vote = 0.0
@@ -946,42 +903,6 @@ class GenesisWorld:
             self.structures[(x, y)] = Structure(x, y, struct_type, builder_id)
         
         self.structures[(x, y)].created_tick = self.time_step
-        
-        # 6.9 AUDIT FIX: Infrastructure Network Formation
-        # If built near another structure, create or join a network
-        nearby_structs = []
-        for dx in range(-2, 3):
-            for dy in range(-2, 3):
-                if dx == 0 and dy == 0: continue
-                pos = ((x + dx) % self.size, (y + dy) % self.size)
-                if pos in self.structures:
-                    nearby_structs.append(pos)
-        
-        if nearby_structs:
-            # Join existing network if any nearby structure is already and in one
-            target_network = None
-            for nx, ny in nearby_structs:
-                for net in self.networks.values():
-                    if (nx, ny) in net.structures:
-                        target_network = net
-                        break
-                if target_network: break
-            
-            if not target_network:
-                # Create new network
-                net_id = f"net_{len(self.networks)}"
-                target_network = InfrastructureNetwork(net_id)
-                self.networks[net_id] = target_network
-                # Add all nearby orphans to this new network
-                for nx, ny in nearby_structs:
-                    target_network.add_structure(nx, ny)
-            
-            target_network.add_structure(x, y)
-            # Agent also becomes a member
-            if builder_id in self.agents:
-                target_network.add_member(builder_id)
-                self.agents[builder_id].network_memberships.add(target_network.id)
-
         return True
     
     def add_terrain_modification(self, terraform_info):
@@ -1066,9 +987,6 @@ class GenesisWorld:
         
             # Level 6.8: Battery Interactions (Tiny Fix)
             if isinstance(struct, Battery):
-                # 🔧 FIX: Auto-correct negative energy phantom bug
-                if struct.stored_energy < 0: struct.stored_energy = 0.0
-                
                 for agent in self.agents.values():
                     if agent.x == x and agent.y == y:
                         if agent.energy > 150: # Surplus
@@ -1109,27 +1027,6 @@ class GenesisWorld:
     # 🐝 LEVEL 7: COLLECTIVE MANIFOLD METHODS
     # ============================================================
     
-    def _update_agent_grid(self):
-        """🔧 OPTIMIZATION: Rebuild spatial grid for O(1) neighbor lookups."""
-        self.agent_grid = {}
-        for agent in self.agents.values():
-            pos = (int(agent.x), int(agent.y))
-            if pos not in self.agent_grid:
-                self.agent_grid[pos] = []
-            self.agent_grid[pos].append(agent.id)
-
-    def get_neighbors(self, x, y, radius):
-        """🔧 OPTIMIZATION: Retrieve neighbors using spatial grid."""
-        neighbors = []
-        rx, ry = int(x), int(y)
-        for dx in range(-radius, radius + 1):
-            for dy in range(-radius, radius + 1):
-                nx, ny = (rx + dx) % self.size, (ry + dy) % self.size
-                if (nx, ny) in self.agent_grid:
-                    for aid in self.agent_grid[(nx, ny)]:
-                        neighbors.append(self.agents[aid])
-        return neighbors
-
     def kuramoto_global_step(self):
         """7.1 Kuramoto Synchronization: Global phase update."""
         if len(self.agents) < 2:
@@ -1140,9 +1037,9 @@ class GenesisWorld:
         for agent in self.agents.values():
             if not hasattr(agent, 'kuramoto_phase'):
                 continue
-            neighbors = self.get_neighbors(agent.x, agent.y, 3)
-            # Filter self
-            neighbors = [n for n in neighbors if n.id != agent.id]
+            neighbors = [a for a in self.agents.values() 
+                         if a.id != agent.id and 
+                         abs(a.x - agent.x) <= 3 and abs(a.y - agent.y) <= 3]
             agent.kuramoto_update(neighbors)
         
         # Calculate order parameter: r = |<e^{iθ}>|
@@ -1151,8 +1048,6 @@ class GenesisWorld:
         if phases:
             complex_order = np.mean([np.exp(1j * p) for p in phases])
             self.kuramoto_order_parameter = abs(complex_order)
-        else:
-            self.kuramoto_order_parameter = 0.0
     
     def federated_gradient_step(self):
         """7.2 Gradient Sharing: Pool and average gradients."""
@@ -1179,31 +1074,6 @@ class GenesisWorld:
             if hasattr(agent, 'cognitive_specialty') and agent.cognitive_specialty:
                 if agent.cognitive_specialty in self.cognitive_modules:
                     self.cognitive_modules[agent.cognitive_specialty].append(agent.id)
-
-    def update_global_metrics(self):
-        """Global metric aggregation for the dashboard."""
-        if not self.agents: return
-        
-        # 1.10 Adaptive Spawning: Rate decreases as population fills 
-        # (Negative feedback loop for stability)
-        capacity = (self.size ** 2) * 0.1 # 10% density limit
-        fill_ratio = len(self.agents) / max(1, capacity)
-        self.base_spawn_rate = max(1.0, 20.0 * (1.1 - fill_ratio))
-        
-        # 1.10 System Entropy: Mean neural complexity of all agents
-        entropies = [a.calculate_weight_entropy() for a in self.agents.values() 
-                     if hasattr(a, 'calculate_weight_entropy')]
-        self.system_entropy = np.mean(entropies) if entropies else 0.0
-        
-        # 1.10 Agent Entropy: Fallback for population energy diversity
-        # 1.10 Agent Entropy: Fallback for population energy diversity
-        energies = np.array([max(0.0, a.energy) for a in self.agents.values()])
-        e_sum = energies.sum()
-        if e_sum > 0:
-            e_norm = (energies + 1e-8) / (e_sum + 1e-7)
-            self.agent_entropy = -np.sum(e_norm * np.log2(e_norm + 1e-10))
-        else:
-            self.agent_entropy = 0.0
     
     def process_consensus(self, proposal_id):
         """7.6 Consensus Mechanisms: Byzantine fault-tolerant voting."""
@@ -1240,16 +1110,10 @@ class GenesisWorld:
         similarities = []
         for i in range(len(protocols)):
             for j in range(i+1, len(protocols)):
-                p_diff = np.abs(protocols[i] - protocols[j])
-                sim = 1.0 - np.mean(p_diff) if p_diff.size > 0 else 1.0
+                sim = 1.0 - np.mean(np.abs(protocols[i] - protocols[j]))
                 similarities.append(sim)
         
-            self.protocol_convergence = np.mean(similarities) if len(similarities) > 0 else 0.0
-        
-        # 7.6 Consensus Mechanism: If convergence > 0.3, start a new proposal occasionally (Staggered)
-        if self.protocol_convergence > 0.3 and self.time_step % 25 == 4:
-            proposal_id = f"prop_{self.time_step}"
-            self.consensus_registry[proposal_id] = {"votes": {}, "result": "pending"}
+        self.protocol_convergence = np.mean(similarities) if similarities else 0.0
     
     def compute_hive_phi(self):
         """7.10 Hive Mind: Calculate collective Φ."""
@@ -1271,21 +1135,17 @@ class GenesisWorld:
         loop_count = 0
         
         for agent in list(self.agents.values()):
-            if hasattr(agent, 'verify_consciousness'):
-                agent.verify_consciousness() # This also calls compute_phi()
-            
-            if hasattr(agent, 'phi_value'):
-                phi_values.append(agent.phi_value)
+            if hasattr(agent, 'compute_phi'):
+                phi = agent.compute_phi()
+                phi_values.append(phi)
             
             if hasattr(agent, 'consciousness_verified') and agent.consciousness_verified:
                 conscious_count += 1
             
-            if hasattr(agent, 'strange_loop_check'):
-                if agent.strange_loop_check():
-                    loop_count += 1
+            if hasattr(agent, 'strange_loop_active') and agent.strange_loop_active:
+                loop_count += 1
         
         self.population_phi = np.mean(phi_values) if phi_values else 0.0
-
         self.consciousness_count = conscious_count
         self.strange_loop_count = loop_count
     
@@ -1331,7 +1191,6 @@ class GenesisWorld:
         self.collective_oracle_model_accuracy = best_oracle_acc
         self.collective_simulation_awareness = max_awareness
         self.discovered_physics_patterns = list(set(all_patterns))
-        self.physics_mastery_score = best_oracle_acc # Map for dashboard
         
         # Merge exploits
         all_exploits = []
@@ -1362,6 +1221,10 @@ class GenesisWorld:
                     'Pattern': p
                 })
         
+        # 🔧 MEMORY FIX: Cap discovery log
+        if len(self.discovery_log) > 100:
+            self.discovery_log = self.discovery_log[-100:]
+        
         # Check for new exploits to log
         for e in self.discovered_physics_exploits:
             pattern_name = f"exploit_{e.get('state_hash', 0) % 1000}"
@@ -1371,6 +1234,10 @@ class GenesisWorld:
                     'Pattern': pattern_name
                 })
                 known_patterns.add(pattern_name)
+        
+        # 🔧 MEMORY FIX: Cap physics patterns
+        if len(self.discovered_physics_patterns) > 50:
+            self.discovered_physics_patterns = self.discovered_physics_patterns[-50:]
 
     # ============================================================
     # ♾️ LEVEL 10: THE OMEGA POINT METHODS
@@ -1400,7 +1267,7 @@ class GenesisWorld:
         """10.10 Global Omega Point verification."""
         criteria = {
             'multiple_conscious': self.consciousness_count >= 3,
-            'high_sync': self.kuramoto_order_parameter > 0.7,
+            'high_sync': self.kuramoto_order_parameter > 0.8,
             'physics_mastery': self.collective_oracle_model_accuracy > 0.9,
             'nested_simulations': self.nested_simulation_depth_max >= 2,
             'scratchpad_active': self.global_scratchpad_activity > 100,
@@ -1417,61 +1284,45 @@ class GenesisWorld:
         }
     
     def level_6_10_step(self):
-        """Combined step function for all Level 6-10 features (Staggered execution)."""
+        """Combined step function for all Level 6-10 features."""
         # Level 6: Geo-Engineering
         self.process_structures()
         self.update_weather_control()
         if self.time_step % 3 == 0:
             self.spawn_resource_with_cultivation()
         
-        # Level 7: Collective Manifold (Staggered for performance)
-        if self.time_step % 3 == 1:
-            self.kuramoto_global_step()
-        if self.time_step % 5 == 2:
-            self.federated_gradient_step()
-        if self.time_step % 10 == 3:
-            self.update_cognitive_modules()
-        if self.time_step % 20 == 4: # Staggered
+        # Level 7: Collective Manifold
+        self.kuramoto_global_step()
+        self.federated_gradient_step()
+        self.update_cognitive_modules()
+        if self.time_step % 20 == 0:
             self.update_protocol_convergence()
-        if self.time_step % 10 == 2: # Staggered
+        if self.time_step % 10 == 0:
             self.compute_hive_phi()
         
         # Level 8: Abstract Representation (lighter, every 5 ticks)
-        if self.time_step % 5 == 1: # Staggered
+        if self.time_step % 5 == 0:
             self.update_consciousness_metrics()
         
         # Level 9: Physics Discovery (every 10 ticks)
-        if self.time_step % 10 == 3: # Staggered
+        if self.time_step % 10 == 0:
             self.update_physics_discovery()
         
         # Level 10: Omega Point (every 20 ticks)
-        if self.time_step % 20 == 5: # Staggered
+        if self.time_step % 20 == 0:
             self.update_omega_tracking()
         
         # ============================================================
-        # 🔧 AUDIT FIX: RUN VERIFICATION CHECKS (Staggered 25-tick cycle)
+        # 🔧 AUDIT FIX: RUN VERIFICATION CHECKS
         # ============================================================
-        # 🔧 AUDIT FIX: High-Frequency Tradition Tracking (Every 5 ticks)
-        if self.time_step % 5 == 0:
+        if self.time_step % 100 == 0:
             self.verify_tradition_persistence()
-        
-        # Staggered 25-tick cycle for other checks
-        if self.time_step % 25 == 7:
             self.measure_cultural_drift()
-        if self.time_step % 25 == 8:
             self.verify_cultural_ratchet()
-        if self.time_step % 25 == 9:
             self.compute_planetary_coverage()
-        if self.time_step % 25 == 10:
             self.verify_type_ii_civilization()
-        if self.time_step % 25 == 11:
             self.verify_symbol_grounding()
-        if self.time_step % 25 == 12:
             self._update_leadership()
-        
-        # 1.10 Global Metric Aggregation (Staggered)
-        if self.time_step % 25 == 13:
-            self.update_global_metrics()
 
     # ============================================================
     # 🔧 AUDIT FIX: NEW METHODS FOR MISSING FEATURES
@@ -1486,10 +1337,6 @@ class GenesisWorld:
         current_behaviors = []
         max_gen = max(a.generation for a in self.agents.values())
         
-        # Guard: Only record once per generation to save compute
-        if max_gen in self.tradition_tracker:
-            return self.tradition_persistence_verified
-            
         for agent in self.agents.values():
             if hasattr(agent, 'tradition_history') and agent.tradition_history:
                 current_behaviors.append(agent.tradition_history[-1])
@@ -1505,28 +1352,28 @@ class GenesisWorld:
             oldest = min(self.tradition_tracker.keys())
             del self.tradition_tracker[oldest]
         
-        # Check autocorrelation at lag=5 (Reduced from 10 for faster feedback)
+        # Check autocorrelation at lag=10
         gen_keys = sorted(self.tradition_tracker.keys())
-        if len(gen_keys) < 5:
+        if len(gen_keys) < 10:
             return False
         
         behaviors_now = self.tradition_tracker.get(gen_keys[-1], [])
-        behaviors_lag = self.tradition_tracker.get(gen_keys[-5], [])
+        behaviors_lag = self.tradition_tracker.get(gen_keys[-10], [])
         
-        if len(behaviors_now) > 0 and len(behaviors_lag) > 0:
-            avg_now = np.mean(behaviors_now, axis=0) if len(behaviors_now) > 0 else np.zeros(3)
-            avg_lag = np.mean(behaviors_lag, axis=0) if len(behaviors_lag) > 0 else np.zeros(3)
+        if not behaviors_now or not behaviors_lag:
+            return False
+        
+        try:
+            avg_now = np.mean(behaviors_now, axis=0)
+            avg_lag = np.mean(behaviors_lag, axis=0)
             
             if len(avg_now) != len(avg_lag):
                 return False
             
-            if np.std(avg_now) > 1e-9 and np.std(avg_lag) > 1e-9:
-                correlation = np.corrcoef(avg_now, avg_lag)[0, 1]
-            else:
-                correlation = 0.0
+            correlation = np.corrcoef(avg_now, avg_lag)[0, 1]
             self.tradition_persistence_verified = correlation > 0.7
             return self.tradition_persistence_verified
-        else: # Added else block to handle cases where behaviors_now or behaviors_lag are empty
+        except:
             return False
     
     def measure_cultural_drift(self):
@@ -1548,13 +1395,13 @@ class GenesisWorld:
         for i in range(4):
             for j in range(i+1, 4):
                 if quadrants[i] and quadrants[j]:
-                    mean_i = np.mean(quadrants[i], axis=0) if len(quadrants[i]) > 0 else np.zeros(3)
-                    mean_j = np.mean(quadrants[j], axis=0) if len(quadrants[j]) > 0 else np.zeros(3)
+                    mean_i = np.mean(quadrants[i], axis=0)
+                    mean_j = np.mean(quadrants[j], axis=0)
                     # Symmetric KL approximation
                     kl = np.sum(np.abs(mean_i - mean_j))
                     divergences.append(kl)
         
-        self.cultural_divergence = np.mean(divergences) if len(divergences) > 0 else 0.0
+        self.cultural_divergence = np.mean(divergences) if divergences else 0.0
         return self.cultural_divergence
     
     def verify_cultural_ratchet(self):
@@ -1576,8 +1423,8 @@ class GenesisWorld:
             'delta': delta
         })
         
-        # Keep only last 100 entries
-        if len(self.invention_history) > 100:
+        # Keep only last 50 entries (Reduced from 100 for memory)
+        if len(self.invention_history) > 50:
             self.invention_history.pop(0)
         
         discoveries = sum(1 for e in self.invention_history if e['type'] == 'discovery')
@@ -1638,7 +1485,7 @@ class GenesisWorld:
         else:
             self.structure_energy_ratio = 0.0
         
-        self.type_ii_verified = self.structure_energy_ratio > 0.4
+        self.type_ii_verified = self.structure_energy_ratio > 0.5
         return self.type_ii_verified
     
     def verify_symbol_grounding(self):
@@ -1669,10 +1516,9 @@ class GenesisWorld:
             correlations = []
             min_dim = min(X.shape[1], Y.shape[1])
             for i in range(min_dim):
-                if np.std(X[:, i]) > 1e-9 and np.std(Y[:, i]) > 1e-9:
-                    corr = np.corrcoef(X[:, i], Y[:, i])[0, 1]
-                    if not np.isnan(corr):
-                        correlations.append(corr ** 2)
+                corr = np.corrcoef(X[:, i], Y[:, i])[0, 1]
+                if not np.isnan(corr):
+                    correlations.append(corr ** 2)
             
             self.symbol_grounding_r2 = np.mean(correlations) if correlations else 0.0
             self.symbol_grounding_verified = self.symbol_grounding_r2 > 0.7
@@ -1708,7 +1554,5 @@ class GenesisWorld:
                 "Event": f"💀 DEATH BROADCAST → {len(neighbors)} receivers",
                 "Vector": [0]*21
             })
-
-
 
 
