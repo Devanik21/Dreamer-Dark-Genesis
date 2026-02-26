@@ -2,9 +2,9 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import time
-import plotly.express as px 
+import plotly.express as px
 import plotly.graph_objects as go
-import json 
+import json
 import zipfile
 import io
 import torch
@@ -396,10 +396,10 @@ def update_simulation():
                 new_x = (agent.x + random.randint(-1, 1)) % world.size
                 new_y = (agent.y + random.randint(-1, 1)) % world.size
                 
-                # 3.0 Epigenetics: Inherit average hidden state
-                parent_hidden_avg = (agent.hidden_state + partner.hidden_state) / 2.0
+                # 3.0 Epigenetics: Inherit average hidden state (DETACH to prevent graph leaks)
+                parent_hidden_avg = (agent.hidden_state.detach() + partner.hidden_state.detach()) / 2.0
                 
-                child = GenesisAgent(new_x, new_y, genome=child_genome, generation=max(agent.generation, partner.generation) + 1, parent_hidden=parent_hidden_avg, parent_id=agent.id)
+                child = GenesisAgent(new_x, new_y, genome=child_genome, generation=max(agent.generation, partner.generation) + 1, parent_hidden=parent_hidden_avg.clone(), parent_id=agent.id)
                 world.agents[child.id] = child
                 
                 # 1.10 AUDIT FIX: Track successful births globally
@@ -3802,8 +3802,6 @@ with tab_meta:
 if st.session_state.running:
     time.sleep(0.02) 
     st.rerun()
-
-
 
 
 

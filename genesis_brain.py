@@ -140,9 +140,13 @@ class GenesisBrain(nn.Module):
 
     def forward(self, x, hidden):
         # Ensure hidden state is correct shape (B, 128) for GRUCell
+        # 🔧 FIX: Clone hidden state to break graph dependencies from previous ticks
         if hidden is None:
             hidden = torch.zeros(x.size(0), self.hidden_dim)
-        elif hidden.dim() == 3:
+        else:
+            hidden = hidden.clone()
+            
+        if hidden.dim() == 3:
             hidden = hidden.squeeze(0)
         # Handle (B, 1, H) -> (B, H)
         if hidden.dim() == 2 and hidden.size(0) != x.size(0):
@@ -617,13 +621,13 @@ class GenesisAgent:
              pass # Complex to implement efficiently, relying on metabolize_free_energy for learning signal
              
         self.hidden_state = h_next.detach()
-        self.last_concepts = concepts # 5.8
-        self.last_vector = vector
-        self.last_comm = comm_vector
-        self.last_value = value
-        self.last_prediction = prediction # 3.9 Store for loss calculation
-        self.last_input = input_tensor    # Store input for next tick's comparison
-        self.last_log_prob = log_prob     # PPO-128: Store for clipped update
+        self.last_concepts = concepts.detach() if concepts is not None else None
+        self.last_vector = vector.detach()
+        self.last_comm = comm_vector.detach() if comm_vector is not None else None
+        self.last_value = value.detach() if value is not None else None
+        self.last_prediction = prediction.detach() if prediction is not None else None
+        self.last_input = input_tensor.detach()
+        self.last_log_prob = log_prob.detach() if log_prob is not None else None
         
         # 2.3 Zahavi Costly Signaling: Generate Proof of Work
         # If signal is complex (high variance), we must prove it's not cheap noise.
@@ -796,9 +800,13 @@ class GenesisAgent:
         recalc_value = self.last_value
         new_log_prob = self.last_log_prob  # Default
         
+        # 🔧 CRITICAL FIX: Zero grads BEFORE the ghost forward pass to prevent accumulation/interference
+        self.optimizer.zero_grad()
+        
         if self.prev_input is not None and self.prev_hidden is not None:
              # Fresh forward pass using cached inputs from decide()
-             recalc_vector, _, _, recalc_value, _, ghost_prediction, _, new_log_prob = self.brain(self.prev_input, self.prev_hidden)
+             # DETACH hidden just in case to ensure zero graph leakage
+             recalc_vector, _, _, recalc_value, _, ghost_prediction, _, new_log_prob = self.brain(self.prev_input.detach(), self.prev_hidden.detach())
              
              pred_loss_fn = nn.MSELoss()
              predictor_loss = pred_loss_fn(ghost_prediction, self.last_input.detach())
@@ -863,9 +871,9 @@ class GenesisAgent:
                 dream_states, dream_rewards = self.brain.dream(current_h, horizon=5)
                 dream_values = self.brain.critic(dream_states)
                 # Lambda return calculation
-                returns = torch.zeros_like(dream_rewards)
+                # returns must be detached to prevent the next tick from trying to backprop through them
                 for t in reversed(range(len(dream_rewards) - 1)):
-                    returns[t] = dream_rewards[t] + 0.99 * dream_values[t+1]
+                    returns[t] = (dream_rewards[t].detach() + 0.99 * dream_values[t+1].detach())
                 dream_critic_loss = 0.5 * (dream_values[:-1] - returns[:-1].detach()).pow(2).mean()
                 dream_actor_loss = -dream_values.mean()
                 dream_loss = (dream_reward_loss + dream_critic_loss + dream_actor_loss) * 0.5
@@ -881,8 +889,7 @@ class GenesisAgent:
         if new_log_prob is not None and recalc_value is not None:
             self.ppo_buffer.store(new_log_prob, recalc_value, flux)
         
-        # Backprop
-        self.optimizer.zero_grad()
+        # Backprop (Gradients already cleared at start of method)
         
         if torch.isnan(total_loss) or torch.isinf(total_loss):
             self.optimizer.zero_grad()
