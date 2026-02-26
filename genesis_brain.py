@@ -117,6 +117,7 @@ class GenesisBrain(nn.Module):
         self.actor_attention = nn.MultiheadAttention(
             embed_dim=hidden_dim, num_heads=4, batch_first=True
         )
+        self.actor_norm = nn.LayerNorm(hidden_dim)  # Prevents tanh saturation
         self.actor = nn.Linear(hidden_dim, output_dim)
         
         # 4. Critic (Value Function)
@@ -137,6 +138,9 @@ class GenesisBrain(nn.Module):
                 nn.init.orthogonal_(m.weight, gain=1.0)
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0.0)
+        # Actor head: small init so outputs start near 0, not saturated at ±1
+        nn.init.orthogonal_(self.actor.weight, gain=0.1)
+        nn.init.constant_(self.actor.bias, 0.0)
 
     def forward(self, x, hidden):
         # Ensure hidden state is correct shape (B, 128) for GRUCell
@@ -164,7 +168,8 @@ class GenesisBrain(nn.Module):
         action_feat = attn_out.squeeze(1) + h_next  # Residual
         
         # 4. Heads
-        vector = torch.tanh(self.actor(action_feat))  # tanh: rich variance, no dead neurons, IQ fix
+        # LayerNorm before tanh prevents activation saturation (all +1 -> 201 Queens bug)
+        vector = torch.tanh(self.actor(self.actor_norm(action_feat)))
         comm = torch.sigmoid(self.comm_out(h_next))
         meta = torch.sigmoid(self.meta_out(h_next))
         value = self.critic(h_next)
