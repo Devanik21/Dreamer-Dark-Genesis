@@ -565,7 +565,7 @@ If you use this codebase in your research, please cite:
   title = {Dreamer-Dark-Genesis: Generative Network of Emergent Simulated Intelligence Systems},
   year = {2026},
   publisher = {GitHub},
-  url = {https://github.com/Devanik21/GeNesIS},
+  url = {https://github.com/Devanik21/Dreamer-Dark-Genesis/tree/main},
   note = {Dreamer V4 Architecture for Multi-Agent Reinforcement Learning}
 }
 ```
