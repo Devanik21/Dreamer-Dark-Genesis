@@ -2,7 +2,7 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import time
-import plotly.express as px
+import plotly.express as px 
 import plotly.graph_objects as go
 import json 
 import zipfile
@@ -3802,6 +3802,7 @@ with tab_meta:
 if st.session_state.running:
     time.sleep(0.02) 
     st.rerun()
+
 
 
 
