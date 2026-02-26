@@ -160,7 +160,7 @@ class GenesisBrain(nn.Module):
         action_feat = attn_out.squeeze(1) + h_next  # Residual
         
         # 4. Heads
-        vector = torch.relu(self.actor(action_feat))
+        vector = torch.tanh(self.actor(action_feat))  # tanh: rich variance, no dead neurons, IQ fix
         comm = torch.sigmoid(self.comm_out(h_next))
         meta = torch.sigmoid(self.meta_out(h_next))
         value = self.critic(h_next)
@@ -780,7 +780,7 @@ class GenesisAgent:
         thought_loudness = self.last_vector.sum().item()
         if not np.isfinite(thought_loudness):
             thought_loudness = 0.0
-        thought_cost = thought_loudness * 0.05
+        thought_cost = min(abs(thought_loudness) * 0.05, 2.0)  # Cap: max 2E/tick, prevents homeostasis drain
         if np.isfinite(thought_cost):
             self.energy -= thought_cost
         # Final NaN sanitizer: if energy ever becomes NaN, restore it
@@ -1131,8 +1131,8 @@ class GenesisAgent:
         # Copy Actor weights
         packet = {
             'weights': {k: v.clone().detach().cpu() for k,v in self.brain.actor.state_dict().items()},
-            'fitness': self.energy,
-            'beta': 0.1 + (self.confidence * 0.2), # High confidence = high spread rate
+            'fitness': max(0.0, min(1.0, self.energy / 200.0)),  # Normalize to 0-1 (was raw energy, up to 200+)
+            'beta': 0.1 + (self.confidence * 0.2),
             'id': self.id
         }
         return packet
@@ -1760,13 +1760,13 @@ class GenesisAgent:
         """9.3 Mathematical Modeling: Train Oracle approximation."""
         x = torch.cat([vector_21.detach(), matter_signal_16.detach()], dim=1)
         predicted = self.oracle_model(x)
-        # Handle partial target (e.g. only Energy Flux observed)
+        # Clamp targets: prevents Oracle loss explosion from unbounded flux values
+        actual_effects_clamped = torch.clamp(actual_effects.detach(), -10.0, 10.0)
         if actual_effects.shape[1] != predicted.shape[1]:
-            # Slice prediction to match available ground truth dimensions
             n = actual_effects.shape[1]
-            loss = nn.MSELoss()(predicted[:, :n], actual_effects.detach())
+            loss = nn.MSELoss()(predicted[:, :n], actual_effects_clamped[:, :n])
         else:
-            loss = nn.MSELoss()(predicted, actual_effects.detach())
+            loss = nn.MSELoss()(predicted, actual_effects_clamped)
         
         self.oracle_model_optimizer.zero_grad()
         loss.backward()

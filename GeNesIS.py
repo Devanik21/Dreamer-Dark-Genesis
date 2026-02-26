@@ -4,7 +4,7 @@ import pandas as pd
 import time
 import plotly.express as px
 import plotly.graph_objects as go
-import json 
+import json
 import zipfile
 import io
 import torch
@@ -148,12 +148,16 @@ def update_simulation():
         
         if len(actions) > 5:
             X = np.array(actions)
-            # Use 4 clusters for: Forager, Builder, Warrior, Queen
             n_c = min(len(X), 4)
-            kmeans = KMeans(n_clusters=n_c, random_state=42).fit(X)
+            kmeans = KMeans(n_clusters=n_c, random_state=42, n_init=5).fit(X)
             roles = ["Forager", "Processor", "Warrior", "Queen"]
+            # Fix D: enforce balanced role distribution — sort by cluster center magnitude
+            # so that the most energetically "intense" cluster becomes Warrior, etc.
+            center_magnitudes = [(i, np.linalg.norm(kmeans.cluster_centers_[i])) for i in range(n_c)]
+            center_magnitudes.sort(key=lambda x: x[1])  # low→Forager, high→Queen
+            label_to_role = {center_magnitudes[i][0]: roles[i] for i in range(n_c)}
             for i, a in enumerate(valid_agents):
-                new_role = roles[kmeans.labels_[i] % 4]
+                new_role = label_to_role[kmeans.labels_[i]]
                 # 4.1 Role Stability: Track role history
                 if hasattr(a, 'role'):
                     a.role_history.append(a.role)
@@ -215,6 +219,9 @@ def update_simulation():
             if social_trust > 0.7:
                 partner = random.choice(neighbors)
                 agent.share_hidden_state(partner)
+                # Fix G: register backup_connections for Fault Tolerance metric
+                agent.add_backup_connection(partner.id)
+                partner.add_backup_connection(agent.id)
             
             # 7.1 Kuramoto Synchronization
             agent.kuramoto_update(neighbors)
@@ -480,8 +487,8 @@ def update_simulation():
             mitosis_threshold = 30.0
             mitosis_cost = 10.0
         else:
-            mitosis_threshold = 90.0
-            mitosis_cost = 40.0
+            mitosis_threshold = 55.0  # Fix C: was 90 — agents at avg 53E now reproduce
+            mitosis_cost = 20.0       # Fix C: was 40 — lower cost = faster generational turnover
         
         if agent.energy > mitosis_threshold and len(world.agents) < 256:
             agent.energy -= mitosis_cost 
@@ -595,6 +602,18 @@ def update_simulation():
             # Keep history short (last 20 samples per gen)
             if len(st.session_state.culture_history[g]) > 20: 
                 st.session_state.culture_history[g].pop(0)
+
+    # Fix F: Periodic symbol grounding + tradition verification (every 50 steps)
+    # These were only triggered on agent death — no deaths = always zero
+    if world.time_step % 50 == 3 and len(agents) > 10:
+        try:
+            world.assess_symbol_grounding(agents)
+        except Exception:
+            pass
+        try:
+            world.check_tradition_persistence()
+        except Exception:
+            pass
 
     for e in events_this_tick:
         st.session_state.event_log.insert(0, e) 
@@ -856,7 +875,7 @@ def collect_full_simulation_dna():
             "spatial_spar": len(world.grid) / max(1, world.size**2),
             "homeo_error": np.mean([abs(a.energy - 120) for a in all_agents]) if all_agents else 0,
             "bridge_dens": sum([len(a.neural_bridge_partners) for a in all_agents]) / max(1, n_pop),
-            "substrate_ind": np.mean([a.brain.actor_mask.sparsity().item() for a in all_agents if hasattr(a.brain, 'actor_mask')]) if any(hasattr(a.brain, 'actor_mask') for a in all_agents) else 0,
+            "substrate_ind": np.mean([a.brain.actor.weight.abs().mean().item() for a in all_agents]) if all_agents else 0,
             "mean_phase": np.mean([a.internal_phase for a in all_agents]) if all_agents else 0,
             "metabolic_eff": np.mean([a.energy / max(1, a.age) for a in all_agents]) if all_agents else 0,
             "connect_index": len(world.bonds) / 202 if hasattr(world, 'bonds') else 0,
@@ -2299,7 +2318,7 @@ with tab_omega:
 | **🤝 Trade Volume** | `{sum([getattr(a, 'trade_count', 0) for a in all_agents])}` | **⚖️ Punish Count** | `{sum([getattr(a, 'punish_count', 0) for a in all_agents])}` |
 | **🍼 Mating Succ** | `{st.session_state.get('successful_births', 0)}` | **🧠 Average IQ** | `{np.mean([float(torch.std(a.last_vector.detach()))*100 for a in all_agents if a.last_vector is not None]) if any(a.last_vector is not None for a in all_agents) else 0:.1f}` |
 | **🛰️ Spatial Spar** | `{len(st.session_state.world.grid) / max(1, st.session_state.world.size**2):.4f}` | **🔋 Homeo Error** | `{np.mean([abs(a.energy - 120) for a in all_agents]):.1f}` |
-| **🔗 Bridge Dens** | `{sum([len(a.neural_bridge_partners) for a in all_agents]) / max(1, n_pop):.2f}` | **🧠 Substrate Ind** | `{np.mean([a.brain.actor_mask.sparsity().item() for a in all_agents if hasattr(a.brain, 'actor_mask')]) if any(hasattr(a.brain, 'actor_mask') for a in all_agents) else 0:.3f}` |
+| **🔗 Bridge Dens** | `{sum([len(a.neural_bridge_partners) for a in all_agents]) / max(1, n_pop):.2f}` | **🧠 Substrate Ind** | `{np.mean([a.brain.actor.weight.abs().mean().item() for a in all_agents]) if all_agents else 0:.3f}` |
 | **📈 Mean Phase** | `{np.mean([a.internal_phase for a in all_agents]):.3f}` | **📊 Metabolic Eff** | `{np.mean([a.energy / max(1, a.age) for a in all_agents]):.2f}` |
 | **🔗 Connect Index** | `{len(st.session_state.world.bonds) / 202:.4f}` | **♾️ Max Recursion** | `{max([a.simulation_depth for a in all_agents]):.0f}` |
 | **📡 Backprop Dp** | `{max([a.backprop_depth for a in all_agents]):.0f}` | **🔭 Physics Score** | `{getattr(st.session_state.world, 'physics_mastery_score', 0.0):.3f}` |
@@ -3783,7 +3802,6 @@ with tab_meta:
 if st.session_state.running:
     time.sleep(0.02) 
     st.rerun()
-
 
 
 
