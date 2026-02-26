@@ -4,7 +4,7 @@ import pandas as pd
 import time
 import plotly.express as px
 import plotly.graph_objects as go
-import json 
+import json
 import zipfile
 import io
 import torch
@@ -559,6 +559,16 @@ def update_simulation():
                 gen = st.session_state.max_generation
             new_agent = GenesisAgent(x, y, genome=genome, generation=gen)
             world.agents[new_agent.id] = new_agent
+
+    # Gene Pool: also seed from living elite agents every 20 ticks
+    # (pool was staying 0 because stable pop = nobody dies)
+    if world.time_step % 20 == 0 and world.agents:
+        elite = sorted(world.agents.values(), key=lambda a: a.age * a.energy, reverse=True)[:5]
+        for ea in elite:
+            if ea.age > 10:
+                st.session_state.gene_pool.append(ea.get_genome())
+        if len(st.session_state.gene_pool) > 50:
+            st.session_state.gene_pool = st.session_state.gene_pool[-50:]
         
     # Calculate Entropy Fallback
     ent_val = getattr(world, 'agent_entropy', 0.0)
@@ -3802,7 +3812,6 @@ with tab_meta:
 if st.session_state.running:
     time.sleep(0.02) 
     st.rerun()
-
 
 
 
