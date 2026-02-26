@@ -872,6 +872,7 @@ class GenesisAgent:
                 dream_values = self.brain.critic(dream_states)
                 # Lambda return calculation
                 # returns must be detached to prevent the next tick from trying to backprop through them
+                returns = torch.zeros_like(dream_rewards)
                 for t in reversed(range(len(dream_rewards) - 1)):
                     returns[t] = (dream_rewards[t].detach() + 0.99 * dream_values[t+1].detach())
                 dream_critic_loss = 0.5 * (dream_values[:-1] - returns[:-1].detach()).pow(2).mean()
